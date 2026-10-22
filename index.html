@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#101828">
+<title>KaliteMall | Canlı OCR Depo Sayımı</title>
+<style>
+:root{font-family:system-ui,-apple-system,Roboto,"Segoe UI",Arial,sans-serif;color:#1c2637;background:#f2f5fa}*{box-sizing:border-box}body{margin:0}
+header{position:sticky;top:0;z-index:3;background:#101828;color:#fff;padding:12px 16px 14px}header strong{font-size:17px}header small{display:block;color:#a8b7ca;margin-top:3px}
+main{max-width:700px;margin:auto;padding:12px 14px 50px}.card{border:1px solid #dfe5ee;border-radius:15px;background:#fff;padding:15px;margin:12px 0;box-shadow:0 2px 7px #10182808}
+.row{display:flex;gap:10px;align-items:center}.spread{justify-content:space-between}.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.span2{grid-column:1/-1}h2{font-size:16px;margin:0 0 11px}label{font-size:13px;font-weight:700;display:block;margin:0 0 5px}input[type=text],input[type=number],select{width:100%;border:1px solid #c6d0dd;border-radius:10px;padding:10px 11px;font-size:16px;min-height:45px;background:#fff;color:#141e30}button{border:0;border-radius:11px;padding:12px 15px;background:#e8edf5;color:#152238;font-size:15px;font-weight:750;cursor:pointer;min-height:43px}button:disabled{opacity:.44;cursor:default}.primary{background:#1665d8;color:#fff}.green{background:#147d47;color:#fff}.ghost{background:transparent;color:inherit}.muted{font-size:12px;color:#65758a}.tiny{font-size:11px;color:#73839a}.status{font-size:13px;color:#395068;line-height:1.45}.ok{color:#197849}.warn{color:#965e14}.err{color:#b42318}.stat{font-size:24px;font-weight:850}.tag{font-size:12px;font-weight:750;background:#e4edfc;color:#155caf;border-radius:30px;padding:5px 9px}.line{border-top:1px solid #edf0f5;margin:12px 0}.entry{border-top:1px solid #e9edf3;padding:10px 0}.entry b{letter-spacing:.2px}.notice{padding:10px 11px;border-radius:10px;background:#fff6e5;color:#805018;font-size:12px;line-height:1.5}
+/* Kamera, sayfanın altından açılan panel olarak kalır. */
+#shade{position:fixed;inset:0;background:#1018289c;z-index:9;display:none}#shade.open{display:block}
+#cameraSheet{position:fixed;z-index:10;bottom:0;left:50%;transform:translate(-50%,103%);transition:transform .22s ease-out;width:min(100%,720px);max-height:94dvh;overflow:auto;border-radius:19px 19px 0 0;background:#111827;color:#fff;box-shadow:0 -10px 35px #0005;padding:10px 12px calc(14px + env(safe-area-inset-bottom));visibility:hidden}
+#cameraSheet.open{transform:translate(-50%,0);visibility:visible}.handle{width:42px;height:4px;border-radius:50px;background:#5d687b;margin:2px auto 12px}.cameraHeader{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:9px}
+.viewer{position:relative;overflow:hidden;border-radius:12px;background:#070d18;aspect-ratio:4/3;max-height:43dvh;display:flex;align-items:center;justify-content:center}.viewer video{width:100%;height:100%;object-fit:cover;transform:translateZ(0)}.reticle{position:absolute;left:6%;right:6%;top:24%;bottom:24%;border:2px solid #50f6a0;border-radius:12px;box-shadow:0 0 0 100vmax #11182710;pointer-events:none}.reticle:before{content:"Etiketteki kod ve beden bu alana gelsin";font-size:11px;position:absolute;top:-26px;left:0;color:white;text-shadow:0 1px 3px #000}.camStatus{margin:8px 0 10px;min-height:20px;color:#e1e9f7;font-size:12px}.camBoxes{display:grid;grid-template-columns:1fr 100px;gap:8px}.camBoxes label{color:#b9cadb;font-size:11px}.camBoxes input{color:#142135}.camButtons{display:flex;gap:8px;margin-top:10px}.camButtons button{flex:1}.camButtons .green{flex:2}.camOptions{display:flex;gap:12px;flex-wrap:wrap;align-items:center;padding:10px 0 0;color:#d5deec;font-size:12px}.camOptions input{width:18px;height:18px;accent-color:#1dd488}.smallCount{color:#9fe0b7;font-size:12px}.alert{background:#873c1b;color:#fff;padding:10px;border-radius:8px;margin:10px 0;font-size:12px;display:none}#lastDetected{color:#cbd8e9;font-size:12px;min-height:20px;margin-top:9px}.hint{color:#a9b8ca;font-size:11px;line-height:1.4;margin:8px 0 0}
+@media(max-height:700px){.viewer{max-height:34dvh}.camOptions{padding-top:5px}}
+</style>
+<script defer src="https://cdn.jsdelivr.net/npm/tesseract.js@6.0.1/dist/tesseract.min.js"></script>
+</head>
+<body>
+<header><strong>KaliteMall · Canlı OCR Sayım</strong><small>Kamera açık kalır · Kod + beden · Renk alanı yok</small></header>
+<main>
+<section class="card"><div class="row spread"><h2>Sayım konumu</h2><span class="tag" id="cloudTag">Bağlantı kontrol ediliyor</span></div>
+<label for="box">Kutu veya raf</label><input id="box" type="text" autocomplete="off" value="Kutu 1" placeholder="Kutu 1 / Raf A">
+<p class="muted">Kutuyu değiştirdiğinde burayı güncelle. Kamera açıkken aynı konum kullanılacak.</p>
+<button class="primary" style="width:100%" id="openCamera">📷 Kamerayı aç ve seri okut</button></section>
+<section class="card"><h2>Manuel sayım ve son okunan</h2>
+<div class="grid"><div><label for="sku">Stok kodu</label><input id="sku" type="text" autocapitalize="characters" placeholder="346-3054-R18"></div><div><label for="size">Beden</label><input id="size" type="text" autocapitalize="characters" placeholder="SM / 38 / STD"></div>
+<div><label for="qty">Adet</label><input id="qty" type="number" inputmode="numeric" value="1" min="1" max="9999"></div><div style="display:flex;align-items:end"><button class="green" style="width:100%" id="manualSave">+ Sayıma ekle</button></div></div>
+<p class="muted">Kodun <b>-R18</b> bölümü zaten varyantı ayırır. Renk yazmak zorunda değilsin.</p>
+<div class="notice">Otomatik kaydetme başlangıçta kapalıdır. Kamera iki okuma boyunca aynı kod ve bedeni görürse otomatik kaydetmeyi açabilirsin. Aynı etiket görüntüde kaldığı sürece ikinci kez sayılmaz.</div>
+</section>
+<section class="card"><div class="row spread"><h2>Sayım sonuçları</h2><span class="tiny" id="sync">Yerel kayıt</span></div>
+<div class="grid"><div><div class="muted">Toplam net adet</div><div class="stat" id="total">0</div></div><div><div class="muted">Farklı kod + beden</div><div class="stat" id="unique">0</div></div></div>
+<div class="row" style="flex-wrap:wrap;margin:12px 0"><button id="csv">⬇ Excel için CSV</button><button id="undo">↶ Son işlemi geri al</button><button id="retry">↻ Sheets'e gönder</button></div>
+<div class="muted" id="activity">Henüz kayıt yok</div><div id="entries"></div></section>
+<div class="notice">Bu uygulama canlı kamerayı Google Apps Script içinde değil, bağımsız HTTPS sayfasında çalıştırır. Sheets eşitlemesi için Apps Script ekranındaki "Canlı kamerayı aç" düğmesinden başlatılmalıdır. Eşitleme yoksa veriler bu cihazda kalır; CSV ile yedek al.</div>
+</main>
+<div id="shade" aria-hidden="true"></div>
+<section id="cameraSheet" role="dialog" aria-modal="true" aria-label="Canlı etiket okuyucu">
+<div class="handle"></div><div class="cameraHeader"><strong>📷 Canlı etiket okuma</strong><button id="closeCamera" class="ghost" aria-label="Kamerayı kapat">✕ Kapat</button></div>
+<div class="viewer"><video id="video" playsinline autoplay muted></video><div class="reticle"></div></div>
+<div class="camStatus" id="camStatus" role="status">Kamera başlatılıyor…</div><div class="smallCount" id="camCount">Bu oturumda: 0 ürün</div>
+<div class="camBoxes"><div><label for="camSku">Bulunan stok kodu</label><input id="camSku" type="text" placeholder="197-1251-R01" autocapitalize="characters"></div><div><label for="camSize">Beden</label><input id="camSize" type="text" placeholder="38 / SM" autocapitalize="characters"></div></div>
+<div id="camAlert" class="alert"></div>
+<div class="camButtons"><button id="resetTarget">↻ Yeni etiket</button><button id="camSave" class="green">+1 Say</button><button id="camSaveAgain">+1 Tekrar</button></div>
+<div class="camOptions"><label class="row" style="gap:6px;cursor:pointer"><input type="checkbox" id="autoCount"> İki eşleşmeyle otomatik say</label><label class="row" style="gap:6px;cursor:pointer"><input type="checkbox" id="rotate180"> Görüntüyü 180° oku</label></div>
+<div id="lastDetected">Kodu ve bedeni ekranda doğrulayarak +1 Say'a bas.</div>
+<p class="hint">Aynı ürün kodu ve beden, otomatik modda ikinci kez sayılmaz. İkinci adet için “+1 Tekrar” veya “Yeni etiket” düğmesini kullan. Kapatınca kamera durur.</p>
+</section>
+<script>
+'use strict';
+const $=id=>document.getElementById(id);
+const DATA_KEY='km_live_ocr_records_v03',BOX_KEY='km_live_ocr_box_v03',DRAFT_KEY='km_live_ocr_draft_v03';
+const MAX_RAW=400;
+const norm=s=>String(s||'').toLocaleUpperCase('tr-TR').replace(/[ÇĞİÖŞÜ]/g,c=>({'Ç':'C','Ğ':'G','İ':'I','Ö':'O','Ş':'S','Ü':'U'})[c]).replace(/ı/g,'I');
+const scrub=s=>norm(s).replace(/[‐‑‒–—]/g,'-').trim();
+function parseLabel(text){
+ const t=scrub(text).replace(/\u00a0/g,' ');
+ // Üç hane, dört hane, varyant eki. R ve K destekli; görselde farklı ekler de görülebilir.
+ const m=t.match(/(?:^|[^\d])(\d{3})\s*[-._ ]\s*(\d{4})\s*[-._ ]\s*([RKB])\s*[-._ ]?\s*([0-9O]{2})(?=$|[^\d])/);
+ const sku=m?`${m[1]}-${m[2]}-${m[3]}${m[4].replace(/O/g,'0')}`:'';
+ const lines=t.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
+ let size='';
+ for(let line of lines){
+  line=line.replace(/\d{3}\s*[-._ ]\s*\d{4}\s*[-._ ]\s*[RKB]\s*\d{2}/g,' ');
+  const hits=[...line.matchAll(/(?:^|[^A-Z0-9])(STANDART|STD|LXL|S\/M|L\/XL|XXXL|XXL|4XL|3XL|XL|SM|XS|S|M|L|(?:3[4-9]|4\d|5\d|60))(?=$|[^A-Z0-9])/g)];
+  for(const x of hits){const v=x[1],n=v==='STANDART'?'STD':v==='S/M'?'SM':v==='L/XL'?'LXL':v;
+   if(['S','M','L'].includes(n)&&line.length>7)continue;
+   if(/^\d{2}$/.test(n)&&line.length>16)continue;
+   size=n;break}
+  if(size)break;
+ }
+ return {sku,size,rawText:String(text||'').slice(0,MAX_RAW)};
+}
+function safeLoad(){try{let data=JSON.parse(localStorage.getItem(DATA_KEY)||'[]');return Array.isArray(data)?data:[]}catch{return[]}}
+let rows=safeLoad(),stream=null,worker=null,cameraActive=false,scanEpoch=0,ocrWorking=false,autoStable='',autoHits=0,lockedKey='',missed=0,cameraCount=0,lastRaw='';
+let sendId='',lastSend=0,bridgeNonce='';
+try{bridgeNonce=new URLSearchParams(location.hash.slice(1)).get('bridge')||''}catch{}
+function persist(){try{localStorage.setItem(DATA_KEY,JSON.stringify(rows))}catch{alert('Cihaz depolaması dolu olabilir. CSV ile hemen yedek al.')}}
+function uid(){return globalThis.crypto?.randomUUID?.() || (Date.now()+'-'+Math.random().toString(36).slice(2))}
+function esc(x){return String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c])}
+function recKey(r){return r.sku+'|'+r.size}
+function render(){let total=0;const sums=new Map();for(const r of rows){total+=r.qty;sums.set(recKey(r),(sums.get(recKey(r))||0)+r.qty)}
+ $('total').textContent=String(total);$('unique').textContent=String([...sums.values()].filter(n=>n>0).length);
+ const pending=rows.filter(r=>!r.synced).length;const bridge=!!(bridgeNonce&&window.opener&&!window.opener.closed);
+ $('cloudTag').textContent=bridge?'Google Sheets köprüsü':'Cihaz kaydı';$('sync').textContent=bridge?(pending?pending+' kayıt bekliyor':'Sheets eşitlendi'):(pending+' yerel kayıt');
+ $('activity').textContent=rows.length+' sayım işlemi';$('retry').disabled=!pending||!bridge;
+ const reversible=rows.some(r=>r.qty>0&&!rows.some(u=>u.undoOf===r.id));$('undo').disabled=!reversible;
+ $('entries').innerHTML=rows.slice(-8).reverse().map(r=>`<div class="entry"><div class="row spread"><b>${esc(r.sku)}</b><span class="tiny ${r.synced?'ok':'warn'}">${r.synced?'✓ Sheets':'● Yerel'}</span></div><div class="row spread"><span class="muted">${esc(r.size)} · ${esc(r.box)}</span><b class="${r.qty<0?'err':''}">${r.qty>0?'+':''}${r.qty}</b></div></div>`).join('');}
+function rememberDraft(){try{localStorage.setItem(DRAFT_KEY,JSON.stringify({sku:$('sku').value,size:$('size').value,qty:$('qty').value}))}catch{}}
+function setCandidate(sku,size,raw){
+ if(!sku||!size)return;
+ if(document.activeElement!==$('camSku'))$('camSku').value=sku;
+ if(document.activeElement!==$('camSize'))$('camSize').value=size;
+ if(document.activeElement!==$('sku'))$('sku').value=sku;
+ if(document.activeElement!==$('size'))$('size').value=size;
+ lastRaw=raw||'';rememberDraft();
+}
+function saveEntry({sku,size,qty=1,undoOf='',rawText=''}){
+ const code=scrub(sku).replace(/\s+/g,''),bed=scrub(size).replace(/\s+/g,''),n=Number(qty),box=$('box').value.trim()||'Kutu 1';
+ if(!/^\d{3}-\d{4}-[A-Z]{1,2}\d{2}$/.test(code)){alert('Stok kodunu kontrol et. Örnek: 346-3054-R18');return null}
+ if(!/^(STD|SM|LXL|XS|S|M|L|XL|XXL|XXXL|3XL|4XL|\d{2,3})$/.test(bed)){alert('Bedeni kontrol et. Örnek: SM, STD veya 38');return null}
+ if(!Number.isInteger(n)||n===0||Math.abs(n)>9999){alert('Adet 1–9999 arasında olmalı');return null}
+ const row={id:uid(),timestamp:new Date().toISOString(),box,sku:code,size:bed,color:'',qty:n,rawText:String(rawText).slice(0,MAX_RAW),undoOf,synced:false};
+ rows.push(row);persist();render();sendPending();navigator.vibrate?.(70);return row;
+}
+function sendPending(){
+ if(!bridgeNonce||!window.opener||window.opener.closed)return;
+ const record=rows.find(r=>!r.synced);if(!record){sendId='';return}
+ if(record.id===sendId && Date.now()-lastSend<4200)return;
+ sendId=record.id;lastSend=Date.now();
+ try{window.opener.postMessage({type:'KM_OCR_SAVE_V03',nonce:bridgeNonce,record},'*')}catch{}
+}
+window.addEventListener('message',e=>{
+ if(!window.opener||e.source!==window.opener||!e.data||e.data.nonce!==bridgeNonce)return;
+ if(e.data.type==='KM_OCR_ACK_V03'){
+  const row=rows.find(r=>r.id===e.data.id);if(row)row.synced=true;persist();sendId='';render();sendPending();
+ }else if(e.data.type==='KM_OCR_ERROR_V03'){$('sync').textContent='Sheets hatası: '+String(e.data.message||'').slice(0,75);sendId='';lastSend=Date.now();}
+});
+function csvCell(v){let s=String(v??'');if(/^[\s]*[=+@-]/.test(s))s="'"+s;return '"'+s.replace(/"/g,'""')+'"'}
+$('csv').addEventListener('click',()=>{const head=['Tarih','İşlem ID','Kutu/Raf','Stok Kodu','Beden','Adet','Ham OCR','Senkron','Geri Alınan İşlem'];
+ const r=[head,...rows.map(x=>[x.timestamp,x.id,x.box,x.sku,x.size,x.qty,x.rawText,x.synced?'Sheets':'Yerel',x.undoOf])];
+ const data='\ufeff'+r.map(x=>x.map(csvCell).join(';')).join('\r\n');const url=URL.createObjectURL(new Blob([data],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download='KaliteMall_Canli_Sayim_'+new Date().toISOString().slice(0,10)+'.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),5000)});
+$('manualSave').addEventListener('click',()=>{const q=Number($('qty').value);saveEntry({sku:$('sku').value,size:$('size').value,qty:q,rawText:lastRaw})});
+$('undo').addEventListener('click',()=>{const last=rows.slice().reverse().find(r=>r.qty>0&&!rows.some(u=>u.undoOf===r.id));if(!last)return;
+ if(!confirm(`${last.sku} / ${last.size}: ${last.qty} adetlik son işlemi geri al?`))return;
+ saveEntry({...last,qty:-last.qty,undoOf:last.id})});
+$('retry').addEventListener('click',()=>{sendId='';sendPending()});
+$('box').value=localStorage.getItem(BOX_KEY)||'Kutu 1';$('box').addEventListener('change',()=>localStorage.setItem(BOX_KEY,$('box').value));
+try{const d=JSON.parse(localStorage.getItem(DRAFT_KEY)||'null');if(d){$('sku').value=d.sku||'';$('size').value=d.size||'';$('qty').value=d.qty||'1'}}catch{}
+['sku','size','qty'].forEach(id=>$(id).addEventListener('input',rememberDraft));
+function camStatus(msg,warning=false){$('camStatus').textContent=msg;$('camStatus').style.color=warning?'#ffbe8b':'#e1e9f7'}
+function alertCam(msg){$('camAlert').textContent=msg;$('camAlert').style.display='block'}
+function hideCamAlert(){$('camAlert').style.display='none'}
+function clearTarget(){lockedKey='';missed=0;autoStable='';autoHits=0;$('camSku').value='';$('camSize').value='';lastRaw='';$('lastDetected').textContent='Yeni etiketi kameraya göster.'}
+function saveCam(allowDuplicate){const sku=$('camSku').value,size=$('camSize').value,key=scrub(sku)+'|'+scrub(size);
+ if(!allowDuplicate && lockedKey===key){alertCam('Bu etiket zaten sayıldı. Yeni etikete geç veya +1 Tekrar seç.');return}
+ const r=saveEntry({sku,size,qty:1,rawText:lastRaw});if(!r)return;
+ cameraCount++;$('camCount').textContent='Bu oturumda: '+cameraCount+' adet';lockedKey=key;missed=0;autoStable='';autoHits=0;
+ $('lastDetected').textContent=`Kaydedildi: ${r.sku} / ${r.size} · ${new Date().toLocaleTimeString('tr-TR')}`;hideCamAlert();
+}
+$('camSave').addEventListener('click',()=>saveCam(false));$('camSaveAgain').addEventListener('click',()=>saveCam(true));$('resetTarget').addEventListener('click',clearTarget);
+function paintFrame(){
+ const video=$('video');if(!video.videoWidth||!video.videoHeight)throw Error('Kamera görüntüsü henüz hazır değil');
+ const sourceW=video.videoWidth,sourceH=video.videoHeight;
+ const cropW=Math.floor(sourceW*.92),cropH=Math.floor(sourceH*.51);
+ const cropX=Math.floor((sourceW-cropW)/2),cropY=Math.floor((sourceH-cropH)/2);
+ const maxW=900,ratio=Math.min(1,maxW/cropW),outW=Math.max(1,Math.round(cropW*ratio)),outH=Math.max(1,Math.round(cropH*ratio));
+ const c=document.createElement('canvas');c.width=outW;c.height=outH;
+ const ctx=c.getContext('2d',{willReadFrequently:true});ctx.filter='grayscale(1) contrast(1.3)';
+ ctx.drawImage(video,cropX,cropY,cropW,cropH,0,0,outW,outH);
+ if($('rotate180').checked){const flipped=document.createElement('canvas');flipped.width=outW;flipped.height=outH;const f=flipped.getContext('2d');f.translate(outW,outH);f.rotate(Math.PI);f.drawImage(c,0,0);return flipped}
+ return c;
+}
+function sleep(ms){return new Promise(resolve=>setTimeout(resolve,ms))}
+async function recognizeLoop(epoch){
+ if(ocrWorking)return;ocrWorking=true;
+ try{
+  if(!window.Tesseract)throw Error('OCR kütüphanesi indirilemedi. İnternet bağlantısını kontrol et.');
+  if(!worker){camStatus('OCR motoru ilk kullanım için hazırlanıyor…');worker=await Tesseract.createWorker('eng',1,{logger:m=>{if(m.status==='recognizing text'&&cameraActive)camStatus('Görüntü okunuyor…')}});
+   await worker.setParameters({tessedit_pageseg_mode:Tesseract.PSM.SPARSE_TEXT});}
+  while(cameraActive && epoch===scanEpoch){
+   let frame;try{frame=paintFrame()}catch{await sleep(350);continue}
+   const result=await worker.recognize(frame);frame.width=0;frame.height=0;
+   if(!cameraActive || epoch!==scanEpoch)break;
+   const parsed=parseLabel(result.data.text||''),key=parsed.sku&&parsed.size?parsed.sku+'|'+parsed.size:'';
+   if(key){
+    missed=0;setCandidate(parsed.sku,parsed.size,parsed.rawText);
+    const locked=lockedKey===key;
+    camStatus(locked?'Bu etiket sayıldı; yenisini göster veya +1 Tekrar':'Bulundu: '+parsed.sku+' / '+parsed.size);
+    if(autoStable===key)autoHits++;else{autoStable=key;autoHits=1}
+    if($('autoCount').checked && autoHits>=2 && !locked)saveCam(false);
+    if(!locked)$('lastDetected').textContent='Bulunan: '+parsed.sku+' · '+parsed.size+' · '+Math.round(result.data.confidence||0)+'% OCR';
+   }else{
+    missed++;autoHits=0;autoStable='';
+    if(missed>=2)hideCamAlert(); // Aynı etiketin yanlışlıkla tekrar sayılmasına karşı kilidi otomatik açma.
+    camStatus(parsed.sku?'Kod bulundu; beden seçilemiyor. Beden alanını kontrol et.':'Etiketi yeşil çerçeveye getir…');
+   }
+   await sleep(550);
+  }
+ }catch(e){camStatus('OCR hata: '+(e.message||e),true);alertCam('Kamera açık ancak OCR başarısız. Kod ve bedeni elle yazıp +1 Say kullanabilirsin.');}
+ finally{ocrWorking=false;if(cameraActive && epoch!==scanEpoch)recognizeLoop(scanEpoch)}
+}
+async function startCamera(){
+ if(cameraActive)return;
+ $('shade').classList.add('open');$('cameraSheet').classList.add('open');document.body.style.overflow='hidden';hideCamAlert();
+ camStatus('Kamera izni isteniyor…');
+ if(!navigator.mediaDevices?.getUserMedia){camStatus('Tarayıcı kamera erişimini desteklemiyor veya HTTPS kullanılmıyor.',true);alertCam('Bu sayfayı Chrome’da bir HTTPS adresinden aç. Google Apps Script sayfasına gömmek kamera erişimini engeller.');return}
+ try{
+  stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720},frameRate:{ideal:20,max:30}}});
+  $('video').srcObject=stream;await $('video').play();cameraActive=true;scanEpoch++;clearTarget();camStatus('Kamera açık, OCR başlatılıyor…');recognizeLoop(scanEpoch);
+ }catch(e){camStatus('Kamera açılamadı: '+(e.message||e),true);alertCam('Chrome kamera iznini kontrol et. Bu sayfa doğrudan HTTPS üzerinden açık olmalı.');}
+}
+function stopCamera(){cameraActive=false;scanEpoch++;for(const track of (stream?.getTracks()||[]))track.stop();stream=null;$('video').srcObject=null;
+ $('cameraSheet').classList.remove('open');$('shade').classList.remove('open');document.body.style.overflow='';}
+$('openCamera').addEventListener('click',startCamera);$('closeCamera').addEventListener('click',stopCamera);
+window.addEventListener('pagehide',()=>{stopCamera();persist()});
+setInterval(sendPending,4500);render();sendPending();
+</script>
+</body>
+</html>
