@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:orientation="vertical" android:background="#F2F5F4">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:background="#10241E" android:orientation="horizontal" android:padding="12dp">
+        <TextView android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="wrap_content" android:text="KaliteMall • Hızlı Sayım"
+            android:textStyle="bold" android:textSize="17sp" android:textColor="#FFFFFF" />
+        <TextView android:id="@+id/totalText" android:layout_width="wrap_content"
+            android:layout_height="wrap_content" android:text="Toplam 0" android:textColor="#B8F2D9" />
+    </LinearLayout>
+    <FrameLayout android:layout_width="match_parent" android:layout_height="0dp"
+        android:layout_weight="1" android:background="#121A18">
+        <androidx.camera.view.PreviewView android:id="@+id/cameraPreview"
+            android:layout_width="match_parent" android:layout_height="match_parent"
+            app:implementationMode="compatible" />
+        <View android:layout_width="match_parent" android:layout_height="155dp"
+            android:layout_gravity="center" android:layout_marginHorizontal="24dp"
+            android:background="@drawable/scan_frame" />
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_gravity="top" android:layout_margin="14dp"
+            android:gravity="center" android:padding="8dp"
+            android:background="#BF10241E" android:textColor="#FFFFFF"
+            android:text="Etiketteki stok kodunu ve bedeni çerçeveye getir" />
+        <TextView android:id="@+id/cameraStatus" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:layout_gravity="bottom"
+            android:background="#D910241E" android:textColor="#FFFFFF"
+            android:padding="10dp" android:gravity="center" android:text="Kamera bekleniyor" />
+    </FrameLayout>
+    <ScrollView android:layout_width="match_parent" android:layout_height="255dp"
+        android:fillViewport="false">
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="vertical" android:padding="12dp">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:gravity="center_vertical">
+                <EditText android:id="@+id/boxInput" android:layout_width="0dp" android:layout_weight="1"
+                    android:layout_height="48dp" android:singleLine="true" android:hint="Kutu/Raf (zorunlu)"
+                    android:inputType="textCapCharacters" android:text="KUTU-1" />
+                <Button android:id="@+id/torchButton" android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" android:text="Fener" />
+                <Button android:id="@+id/cameraButton" android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" android:text="Kamera" />
+            </LinearLayout>
+            <TextView android:id="@+id/lastScanText" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:paddingVertical="7dp"
+                android:textSize="18sp" android:textStyle="bold" android:textColor="#10241E"
+                android:text="Henüz sayım yapılmadı" />
+            <TextView android:id="@+id/syncStatus" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:textColor="#3D6255"
+                android:text="Google Sheets: bağlantı bekleniyor" />
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal">
+                <Button android:id="@+id/undoButton" android:layout_width="0dp"
+                    android:layout_weight="1" android:layout_height="wrap_content" android:text="Son sayımı geri al" />
+                <Button android:id="@+id/exportButton" android:layout_width="0dp"
+                    android:layout_weight="1" android:layout_height="wrap_content" android:text="CSV yedeği" />
+            </LinearLayout>
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:paddingTop="8dp" android:text="Sheets bağlantısı (bir kez)"
+                android:textStyle="bold" android:textColor="#10241E" />
+            <EditText android:id="@+id/scriptUrlInput" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:singleLine="true"
+                android:inputType="textUri" android:hint="Apps Script /exec URL" />
+            <EditText android:id="@+id/secretInput" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:singleLine="true"
+                android:inputType="textPassword" android:hint="64 karakter gizli anahtar" />
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal">
+                <Button android:id="@+id/connectButton" android:layout_width="0dp"
+                    android:layout_weight="1" android:layout_height="wrap_content" android:text="Bağlantıyı test et" />
+                <Button android:id="@+id/syncNowButton" android:layout_width="0dp"
+                    android:layout_weight="1" android:layout_height="wrap_content" android:text="Bekleyenleri gönder" />
+            </LinearLayout>
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:textColor="#5B6C65" android:textSize="12sp"
+                android:text="%85 eşik + 2 eşleşme. Aynı kodu tekrar saymak için 0,6 sn boş/koyu zemini göster. Kayıt önce telefona, sonra otomatik Sheets'e yazılır." />
+        </LinearLayout>
+    </ScrollView>
+</LinearLayout>
