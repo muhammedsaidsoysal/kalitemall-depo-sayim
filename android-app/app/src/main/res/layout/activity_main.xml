@@ -16,32 +16,38 @@
         <androidx.camera.view.PreviewView android:id="@+id/cameraPreview"
             android:layout_width="match_parent" android:layout_height="match_parent"
             app:implementationMode="compatible" />
-        <!-- Labels live ABOVE the scan zones, not inside the cropped OCR regions. -->
+        <!-- Tight code/size windows as in the approved screenshot. The actual CameraX
+             OCR crops are derived directly from codeTarget and sizeTarget positions.
+             Captions are OUTSIDE these crops; barcode/color/product text is excluded. -->
         <LinearLayout android:id="@+id/dualZonesOverlay"
-            android:layout_width="match_parent" android:layout_height="68dp"
-            android:layout_gravity="center" android:layout_marginHorizontal="12dp"
-            android:orientation="vertical" android:gravity="center_vertical">
-            <LinearLayout android:layout_width="match_parent" android:layout_height="20dp"
+            android:layout_width="wrap_content" android:layout_height="49dp"
+            android:layout_gravity="center_vertical|end"
+            android:layout_marginEnd="36dp"
+            android:orientation="vertical">
+            <LinearLayout android:layout_width="wrap_content" android:layout_height="20dp"
                 android:orientation="horizontal" android:gravity="center_vertical">
-                <TextView android:layout_width="0dp" android:layout_weight="3.2"
-                    android:layout_height="wrap_content" android:text="STOK KODU"
-                    android:gravity="center" android:textSize="11sp" android:textStyle="bold"
+                <TextView android:id="@+id/codeTitle"
+                    android:layout_width="80dp" android:layout_height="20dp"
+                    android:text="STOK KODU" android:gravity="center"
+                    android:textSize="10sp" android:textStyle="bold"
                     android:textColor="#FFFFFF" android:background="#B2186D52" />
-                <Space android:layout_width="8dp" android:layout_height="match_parent" />
-                <TextView android:layout_width="0dp" android:layout_weight="1"
-                    android:layout_height="wrap_content" android:text="BEDEN"
-                    android:gravity="center" android:textSize="11sp" android:textStyle="bold"
+                <Space android:id="@+id/headerGap" android:layout_width="39dp"
+                    android:layout_height="20dp" />
+                <TextView android:layout_width="52dp" android:layout_height="20dp"
+                    android:text="BEDEN" android:gravity="center"
+                    android:textSize="10sp" android:textStyle="bold"
                     android:textColor="#FFFFFF" android:background="#B2186D52" />
             </LinearLayout>
-            <LinearLayout android:layout_width="match_parent" android:layout_height="48dp"
+            <LinearLayout android:layout_width="wrap_content" android:layout_height="29dp"
                 android:orientation="horizontal" android:gravity="center_vertical">
                 <FrameLayout android:id="@+id/codeTarget"
-                    android:layout_width="0dp" android:layout_weight="3.2"
-                    android:layout_height="48dp" android:background="@drawable/scan_frame" />
-                <Space android:layout_width="8dp" android:layout_height="match_parent" />
+                    android:layout_width="80dp" android:layout_height="29dp"
+                    android:background="@drawable/scan_frame" />
+                <Space android:id="@+id/guideGap" android:layout_width="39dp"
+                    android:layout_height="29dp" />
                 <FrameLayout android:id="@+id/sizeTarget"
-                    android:layout_width="0dp" android:layout_weight="1"
-                    android:layout_height="48dp" android:background="@drawable/scan_frame" />
+                    android:layout_width="52dp" android:layout_height="29dp"
+                    android:background="@drawable/scan_frame" />
             </LinearLayout>
         </LinearLayout>
         <View android:id="@+id/fullFrameGuide"
@@ -101,11 +107,37 @@
                 android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:text="Etiket düzeni farklı: tüm etiketi tara (yedek)"
                 android:checked="false" />
+            <Button android:id="@+id/roiAdjustButton"
+                android:layout_width="match_parent" android:layout_height="40dp"
+                android:text="Hedef kutularını ayarla (gerektiğinde)" />
+            <LinearLayout android:id="@+id/roiAdjustGroup" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:orientation="vertical"
+                android:visibility="gone">
+                <TextView android:id="@+id/codeWidthText"
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:text="Stok kodu kutusu: 80 dp" android:textColor="#164936" />
+                <SeekBar android:id="@+id/codeWidthSeek"
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:max="110" android:progress="20" />
+                <TextView android:id="@+id/gapWidthText"
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:text="Kutular arası: 39 dp" android:textColor="#164936" />
+                <SeekBar android:id="@+id/gapWidthSeek"
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:max="70" android:progress="23" />
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:text="Renk alanı yeşil stok kodu kutusuna giriyorsa kod kutusunu daralt. Kod kesiliyorsa biraz genişlet."
+                    android:textSize="12sp" android:textColor="#475569" />
+            </LinearLayout>
             <TextView android:id="@+id/rawOcrText" android:layout_width="match_parent"
                 android:layout_height="wrap_content" android:textColor="#475569"
                 android:paddingVertical="4dp" android:maxLines="3"
                 android:ellipsize="end" android:textSize="12sp"
                 android:text="Kameranın gördüğü yazı: —" />
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:padding="7dp" android:background="#D3F5E0"
+                android:textColor="#0D5134" android:textStyle="bold"
+                android:text="Dar tarama alanı: renk ve açıklama yok" />
             <TextView android:id="@+id/lastScanText" android:layout_width="match_parent"
                 android:layout_height="wrap_content" android:paddingVertical="7dp"
                 android:textSize="18sp" android:textStyle="bold" android:textColor="#10241E"

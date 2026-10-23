@@ -22,6 +22,7 @@ import androidx.camera.core.UseCaseGroup
 import java.util.concurrent.atomic.AtomicBoolean
 import android.util.Size
 import android.widget.Toast
+import android.widget.SeekBar
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.Camera
@@ -104,6 +105,23 @@ class MainActivity : AppCompatActivity() {
         ui.codeTarget.addOnLayoutChangeListener { _,_,_,_,_,_,_,_,_ -> updateRoiBounds() }
         ui.sizeTarget.addOnLayoutChangeListener { _,_,_,_,_,_,_,_,_ -> updateRoiBounds() }
         ui.cameraPreview.post { updateRoiBounds() }
+        // Fine-tune the real OCR crop width/gap to the supplier label in the camera.
+        // Dimensions are in dp, then converted to actual View bounds in updateRoiBounds().
+        ui.codeWidthSeek.progress=(prefs.getInt("code_width_dp",80)-60).coerceIn(0,110)
+        ui.gapWidthSeek.progress=(prefs.getInt("gap_width_dp",39)-16).coerceIn(0,70)
+        ui.roiAdjustButton.setOnClickListener {
+            ui.roiAdjustGroup.visibility=if(ui.roiAdjustGroup.visibility==View.VISIBLE) View.GONE else View.VISIBLE
+        }
+        val seekListener=object:SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar:SeekBar?,progress:Int,fromUser:Boolean) {
+                applyRoiDimensions()
+            }
+            override fun onStartTrackingTouch(seekBar:SeekBar?) { }
+            override fun onStopTrackingTouch(seekBar:SeekBar?) { }
+        }
+        ui.codeWidthSeek.setOnSeekBarChangeListener(seekListener)
+        ui.gapWidthSeek.setOnSeekBarChangeListener(seekListener)
+        applyRoiDimensions()
         ui.manualAddButton.setOnClickListener { addManualCount() }
         // Tap a label on preview to ask CameraX for autofocus at that position.
         ui.cameraPreview.setOnTouchListener { _, event ->
@@ -155,6 +173,29 @@ class MainActivity : AppCompatActivity() {
         ui.dualZonesOverlay.visibility=if(fullFrameMode) View.GONE else View.VISIBLE
         ui.fullFrameGuide.visibility=if(fullFrameMode) View.VISIBLE else View.GONE
         ui.cameraPreview.post { updateRoiBounds() }
+    }
+
+    private fun dp(value:Int):Int=(value*resources.displayMetrics.density+0.5f).toInt()
+
+    private fun applyRoiDimensions() {
+        val codeWidth=60+ui.codeWidthSeek.progress
+        val gap=16+ui.gapWidthSeek.progress
+        // Code width and inter-field gap affect BOTH guides and their OCR crops.
+        fun setWidth(view:View,widthDp:Int) {
+            val lp=view.layoutParams ?: return
+            lp.width=dp(widthDp)
+            view.layoutParams=lp
+        }
+        setWidth(ui.codeTitle,codeWidth)
+        setWidth(ui.codeTarget,codeWidth)
+        setWidth(ui.headerGap,gap)
+        setWidth(ui.guideGap,gap)
+        ui.codeWidthText.text="Stok kodu kutusu: ${codeWidth} dp"
+        ui.gapWidthText.text="Kutular arası: ${gap} dp"
+        prefs.edit().putInt("code_width_dp",codeWidth).putInt("gap_width_dp",gap).apply()
+        // Clear the previous ROI until layout has actually measured the new frames.
+        scanZones=null
+        ui.dualZonesOverlay.post { updateRoiBounds() }
     }
 
     private fun updateRoiBounds() {
@@ -311,7 +352,9 @@ class MainActivity : AppCompatActivity() {
         val view=ui.cameraPreview
         if(view.width<=0 || view.height<=0) return
         val focusY = view.height / 2f
-        focusAt(view.width / 2f, focusY)
+        val zones=scanZones
+        val focusX=if(zones!=null) ((zones.code.left+zones.size.right)/2f)*view.width else view.width/2f
+        focusAt(focusX, focusY)
     }
     private fun focusAt(x:Float,y:Float) {
         val camera=boundCamera ?: return
