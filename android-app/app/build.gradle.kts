@@ -9,14 +9,14 @@ android {
         applicationId = "com.kalitemall.deposayim"
         minSdk = 23
         targetSdk = 35
-        versionCode = 5
-        versionName = "1.5-precision-zones"
+        versionCode = 7
+        versionName = "1.7-fast-count"
     }
     // GitHub Actions debug APK is signed by an ephemeral key.
     // Install this beta alongside the existing app so its unsynced scans remain safe.
     buildTypes {
         getByName("debug") {
-            applicationIdSuffix = ".precisionv15"
+            applicationIdSuffix = ".serialv17"
         }
     }
     compileOptions {

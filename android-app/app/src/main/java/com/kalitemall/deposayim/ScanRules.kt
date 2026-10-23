@@ -10,7 +10,7 @@ data class ScanCandidate(val sku: String, val size: String, val score: Float, va
 object ScanRules {
     const val MIN_SCORE = 0f // No OCR confidence cutoff; rely on consecutive matching reads.
     // Distinguish the KaliteMall SKU from PodyumPlus raw barcode (SM-98035).
-    private val skuRe = Regex("(?<![A-Z0-9])([0-9]{3})\\s*[-–—]\\s*([0-9]{4})\\s*[-–—]\\s*([RKB])\\s*([0-9]{2})(?![A-Z0-9])")
+    private val skuRe = Regex("(?<![A-Z0-9])([0-9]{3})\\s*[-–—]\\s*([0-9]{1,10})\\s*[-–—]\\s*([RKB])\\s*([0-9]{2})(?![A-Z0-9])")
     private val sizeRe = Regex("(?<![A-Z0-9])(STANDART|XXXL|XXL|LXL|STD|SM|4XL|3XL|XS|XL|XXL|S|M|L|(?:3[4-9]|4[0-9]|5[0-9]|60))(?![A-Z0-9])")
 
     fun normalize(raw: String) = raw.uppercase(Locale.ROOT).replace('İ','I').replace('ı','I')
@@ -39,6 +39,23 @@ object ScanRules {
             }
         }.distinct()
         return stitched.singleOrNull()
+    }
+
+    /**
+     * Display-only recovery for a common OCR edge artifact: R43 is read as R431.
+     * This is NEVER accepted as an automatic count, because R431 might actually
+     * be a different supplier code. The operator must verify the printed label.
+     */
+    fun provisionalCodeFromRegion(lines: List<OcrLine>): String? {
+        val withOneTrailingDigit = Regex(
+            "(?<![A-Z0-9])([0-9]{3})\\s*[-–—]\\s*([0-9]{1,10})\\s*[-–—]\\s*([RKB])\\s*([0-9]{2})[0-9](?![A-Z0-9])"
+        )
+        val possibilities = lines.flatMap { line ->
+            withOneTrailingDigit.findAll(normalize(line.text)).map { m ->
+                "${m.groupValues[1]}-${m.groupValues[2]}-${m.groupValues[3]}${m.groupValues[4]}"
+            }.toList()
+        }.distinct()
+        return possibilities.singleOrNull()
     }
 
     fun sizeFromRegion(lines: List<OcrLine>): String? {
@@ -135,27 +152,45 @@ class AutoCounter(
     private var lastValidAt = -1L
     private var locked: String? = null
     private var blankSince = -1L
+    private var blankObservations = 0
+    private var differentKey: String? = null
+    private var differentMatches = 0
 
     fun observe(candidate: ScanCandidate?, now: Long, isBlankScene: Boolean = false): ScanCandidate? {
         val key = candidate?.let { "${it.sku}|${it.size}" }
         if(locked != null && key == locked) {
-            blankSince = -1L
+            // Seeing the same physical label again never re-arms the counter.
+            blankSince = -1L; blankObservations = 0
+            differentKey = null; differentMatches = 0
             return null
         }
         if(locked != null) {
             if(key != null && key != locked) {
-                locked = null
-                blankSince = -1L
-            } else if(key == null && isBlankScene) {
-                if(blankSince < 0L) blankSince = now
-                if(now - blankSince >= clearAfterMs) {
-                    locked = null
-                    blankSince = -1L
+                // One random OCR hallucination must not unlock an already counted label.
+                if(differentKey == key) differentMatches++
+                else { differentKey = key; differentMatches = 1 }
+                blankSince = -1L; blankObservations = 0
+                if(differentMatches >= 2) {
+                    // Two verified frames of a new SKU/size: count NOW,
+                    // rather than unnecessarily waiting for a third OCR cycle.
+                    locked = key
+                    proposed = null; matches = 0; lastValidAt = -1L
+                    differentKey = null; differentMatches = 0
+                    return candidate
                 }
-            } else blankSince = -1L
+            } else if(key == null && isBlankScene) {
+                differentKey = null; differentMatches = 0
+                if(blankSince < 0L) { blankSince = now; blankObservations = 1 }
+                else blankObservations++
+                if(blankObservations >= 2 && now - blankSince >= clearAfterMs) {
+                    locked = null; blankSince = -1L; blankObservations = 0
+                }
+            } else {
+                blankSince = -1L; blankObservations = 0
+                differentKey = null; differentMatches = 0
+            }
+            if(locked != null) return null
         }
-        if(locked != null) return null
-
         if(proposed != null && lastValidAt >= 0L && now - lastValidAt > matchWindowMs) {
             proposed = null; matches = 0; lastValidAt = -1L
         }
@@ -171,15 +206,18 @@ class AutoCounter(
         lastValidAt = now
         if(matches < 2) return null
         proposed = null; matches = 0; lastValidAt = -1L
-        locked = key; blankSince = -1L
+        locked = key; blankSince = -1L; blankObservations = 0
+        differentKey = null; differentMatches = 0
         return candidate
     }
     fun lockCurrent(sku: String, size: String) {
         proposed = null; matches = 0; lastValidAt = -1L
-        locked = "${sku}|${size}"; blankSince = -1L
+        locked = "${sku}|${size}"; blankSince = -1L; blankObservations = 0
+        differentKey = null; differentMatches = 0
     }
     fun reset() {
         proposed = null; matches = 0; lastValidAt = -1L
-        locked = null; blankSince = -1L
+        locked = null; blankSince = -1L; blankObservations = 0
+        differentKey = null; differentMatches = 0
     }
 }

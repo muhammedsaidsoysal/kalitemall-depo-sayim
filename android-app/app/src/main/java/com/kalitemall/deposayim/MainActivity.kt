@@ -11,9 +11,14 @@ import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.content.Context
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.graphics.Bitmap
 import android.graphics.RectF
 import android.view.View
+import android.view.WindowManager
 import android.view.MotionEvent
 import androidx.camera.core.FocusMeteringAction
 import java.util.concurrent.TimeUnit
@@ -45,6 +50,19 @@ class MainActivity : AppCompatActivity() {
     private val analyzerExecutor=Executors.newSingleThreadExecutor()
     private val counter=AutoCounter()
     private val readingHold=ReadingHold()
+    private val motionGate=MotionGate()
+    private val sensors by lazy { getSystemService(Context.SENSOR_SERVICE) as SensorManager }
+    private val motionListener=object:SensorEventListener {
+        override fun onAccuracyChanged(sensor:Sensor?,accuracy:Int) { }
+        override fun onSensorChanged(event:SensorEvent) {
+            val now=SystemClock.elapsedRealtime()
+            when(event.sensor.type) {
+                Sensor.TYPE_GYROSCOPE -> motionGate.onGyro(event.values[0],event.values[1],event.values[2],now)
+                Sensor.TYPE_ACCELEROMETER -> motionGate.onAccelerometer(event.values[0],event.values[1],event.values[2],now)
+            }
+        }
+    }
+    private var lastRecognizedAt=0L
     private var lastFocusAt = -5000L
     private var provider:ProcessCameraProvider?=null
     private var cameraOn=false
@@ -77,6 +95,10 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         ui=ActivityMainBinding.inflate(layoutInflater)
         setContentView(ui.root)
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        // Avoid an EditText grabbing focus and blocking hands-free OCR at launch.
+        ui.root.isFocusableInTouchMode=true
+        ui.root.requestFocus()
         store=ScanStore(this)
         sheets=SheetsSync(this,store) { msg -> ui.syncStatus.text=msg;updateTotals() }
         tone=try { ToneGenerator(AudioManager.STREAM_NOTIFICATION,85) } catch (_:Exception) { null }
@@ -243,6 +265,11 @@ class MainActivity : AppCompatActivity() {
                     .setViewPort(viewPort).build()
                 boundCamera=p.bindToLifecycle(this,CameraSelector.DEFAULT_BACK_CAMERA,group)
                 cameraOn=true
+                motionGate.reset()
+                val gyro=sensors.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
+                val accel=sensors.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+                if(gyro!=null) sensors.registerListener(motionListener,gyro,SensorManager.SENSOR_DELAY_GAME)
+                else if(accel!=null) sensors.registerListener(motionListener,accel,SensorManager.SENSOR_DELAY_GAME)
                 counter.reset()
                 readingHold.reset()
                 ui.cameraButton.text="Kamerayı durdur"
@@ -258,6 +285,9 @@ class MainActivity : AppCompatActivity() {
             return
         }
         val started=SystemClock.elapsedRealtime()
+        if(motionGate.skip(started)) {
+            imageProxy.close();ocrBusy.set(false);return
+        }
         if(fullFrameMode) {
             val cameraImage=imageProxy.image
             if(cameraImage==null) {
@@ -323,12 +353,15 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
                     val code=ScanRules.codeFromRegion(codeLines)
+                    // Tentative text only: never use OCR-corrected codes for automatic counts.
+                    val codeHint=if(code==null) ScanRules.provisionalCodeFromRegion(codeLines) else null
                     val size=ScanRules.sizeFromRegion(sizeLines)
                     val accepted=ScanRules.parseDual(codeLines,sizeLines)
                     val raw="KOD: "+codeLines.joinToString(" ") { it.text }+
                         " | BEDEN: "+sizeLines.joinToString(" ") { it.text }
                     onReading(accepted,SystemClock.elapsedRealtime()-started,
-                        codeLines.isEmpty() && sizeLines.isEmpty(),raw,code,size)
+                        codeLines.isEmpty() && sizeLines.isEmpty(),raw,code ?: codeHint,size,
+                        codeHint!=null)
                 }
                 .addOnFailureListener { e -> ui.cameraStatus.text="OCR hatası: ${e.message}" }
                 .addOnCompleteListener { prepared.bitmap.recycle(); ocrBusy.set(false) }
@@ -340,7 +373,8 @@ class MainActivity : AppCompatActivity() {
         boundCamera?.cameraControl?.enableTorch(false)
         boundCamera=null;torchEnabled=false
         ui.torchButton.text="Fener"
-        provider?.unbindAll();cameraOn=false;counter.reset();readingHold.reset()
+        sensors.unregisterListener(motionListener)
+        provider?.unbindAll();cameraOn=false;counter.reset();readingHold.reset();motionGate.reset()
         ui.cameraButton.text="Kamerayı aç"
         ui.cameraStatus.text="Kamera durduruldu"
     }
@@ -372,9 +406,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun onReading(candidate:ScanCandidate?, durationMs:Long, blankScene:Boolean,
-                          rawOcr:String, partialSku:String?=null, partialSize:String?=null) {
+                          rawOcr:String, partialSku:String?=null, partialSize:String?=null,
+                          provisionalCode:Boolean=false) {
         if(!cameraOn) return
         latestReading=candidate
+        if(candidate!=null || partialSku!=null) lastRecognizedAt=SystemClock.elapsedRealtime()
+        else if(SystemClock.elapsedRealtime()-lastRecognizedAt>3500L &&
+                SystemClock.elapsedRealtime()-lastFocusAt>5000L) focusOnTarget()
         ui.rawOcrText.text="Kameranın gördüğü yazı: "+
             rawOcr.replace('\n',' ').replace('\r',' ').take(200).ifBlank { "—" }
         val (seenSku, seenSize)=readingHold.update(SystemClock.elapsedRealtime(),
@@ -383,7 +421,10 @@ class MainActivity : AppCompatActivity() {
         // Code and size update independently. Never wait for the product name or
         // for both fields to be present just to show a valid stock code.
         // An operator actively editing one field is never overwritten in that field.
-        if(seenSku!=null && !ui.detectedSkuInput.hasFocus()) {
+        // Empty fields are safe to fill even if their EditText has keyboard focus.
+        // Never overwrite nonempty text the operator may be correcting.
+        if(seenSku!=null && (!ui.detectedSkuInput.hasFocus() ||
+                ui.detectedSkuInput.text.isNullOrBlank())) {
             val oldSku=ui.detectedSkuInput.text.toString()
             if(oldSku!=seenSku) {
                 ui.detectedSkuInput.setText(seenSku)
@@ -393,7 +434,8 @@ class MainActivity : AppCompatActivity() {
                     ui.detectedSizeInput.setText("")
             }
         }
-        if(seenSize!=null && !ui.detectedSizeInput.hasFocus() &&
+        if(seenSize!=null && (!ui.detectedSizeInput.hasFocus() ||
+                ui.detectedSizeInput.text.isNullOrBlank()) &&
                 ui.detectedSizeInput.text.toString()!=seenSize)
             ui.detectedSizeInput.setText(seenSize)
         val box=ui.boxInput.text.toString().trim()
@@ -404,12 +446,16 @@ class MainActivity : AppCompatActivity() {
         }
         if(candidate==null) {
             counter.observe(null,SystemClock.elapsedRealtime(),blankScene)
-            ui.cameraStatus.text=if(seenSku!=null || seenSize!=null)
-                "Kısa titreşim / odak kaybı · önceki okuma korunuyor · ${durationMs}ms"
+            ui.cameraStatus.text=if(provisionalCode)
+                "Olası kod: ${partialSku ?: "—"} · SON KARAKTERİ ETİKETTEN KONTROL ET · manuel +1"
+                else if(seenSku!=null || seenSize!=null)
+                    "Kısa titreşim / odak kaybı · önceki okuma korunuyor · ${durationMs}ms"
                 else "Etiket aranıyor · OCR ${durationMs}ms"
             return
         }
-        if(!ui.autoSwitch.isChecked || ui.detectedSkuInput.hasFocus() || ui.detectedSizeInput.hasFocus()) {
+        if(!ui.autoSwitch.isChecked ||
+            (ui.detectedSkuInput.hasFocus() && ui.detectedSkuInput.text.toString()!=candidate.sku) ||
+            (ui.detectedSizeInput.hasFocus() && ui.detectedSizeInput.text.toString()!=candidate.size)) {
             ui.cameraStatus.text="${candidate.sku} ${candidate.size} · manuel kontrol · ${durationMs}ms"
             return
         }
@@ -426,7 +472,7 @@ class MainActivity : AppCompatActivity() {
             .replace('–','-').replace('—','-').replace(Regex("\\s+"),"")
         val size=ScanRules.normalize(ui.detectedSizeInput.text.toString()).trim()
             .replace("STANDART","STD")
-        val skuPattern=Regex("[0-9]{3}-[0-9]{4}-[RKB][0-9]{2}")
+        val skuPattern=Regex("[0-9]{3}-[0-9]{1,10}-[RKB][0-9]{2}")
         val sizePattern=Regex("STD|SM|LXL|XS|S|M|L|XL|XXL|XXXL|3XL|4XL|[0-9]{2}")
         if(!skuPattern.matches(sku) || !sizePattern.matches(size)) {
             toast("Ürün kodunu ve bedeni kontrol et: örn. 317-2053-R56 / 40")

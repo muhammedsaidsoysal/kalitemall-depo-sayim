@@ -125,4 +125,50 @@ class ScanRulesTest {
             OcrLine("317-2053-R56",.70f,.4f,.42f,0),
             OcrLine("346-3054-R18",.75f,.4f,.50f,0))))
     }
+
+    @Test fun fiveDigitMiddleIsAccepted() {
+        val code=listOf(OcrLine("111-50660-R43",.74f,.5f,.5f,0))
+        assertEquals("111-50660-R43", ScanRules.codeFromRegion(code))
+        assertEquals("111-50660-R43", ScanRules.parseDual(code,listOf(OcrLine("36",.8f,.5f,.5f,1)))!!.sku)
+    }
+    @Test fun trailingOcrDigitIsSuggestionOnly() {
+        val noisy=listOf(OcrLine("111-50660-R431",.74f,.5f,.5f,0))
+        assertNull(ScanRules.codeFromRegion(noisy))
+        assertNull(ScanRules.parseDual(noisy,listOf(OcrLine("36",.9f,.5f,.5f,1))))
+        assertEquals("111-50660-R43", ScanRules.provisionalCodeFromRegion(noisy))
+    }
+    @Test fun sixDigitMiddleAlsoCounts() {
+        assertEquals("111-506600-R43",ScanRules.codeFromRegion(listOf(OcrLine("111-506600-R43",.9f,.5f,.5f,0))))
+    }
+    @Test fun variableLengthMiddleButExactlyTwoSuffixDigits() {
+        for (mid in listOf("7","89","123","2053","50660","123456","1234567890")) {
+            assertEquals("111-$mid-R43",ScanRules.codeFromRegion(listOf(OcrLine("111-$mid-R43",.9f,.5f,.5f,0))))
+        }
+        assertNull(ScanRules.codeFromRegion(listOf(OcrLine("111-50660-R431",.9f,.5f,.5f,0))))
+        assertNull(ScanRules.codeFromRegion(listOf(OcrLine("111-50660-R4",.9f,.5f,.5f,0))))
+    }
+    @Test fun transientWrongLabelDoesNotRecountLockedOldLabel() {
+        val c=AutoCounter()
+        val a=ScanRules.parse(lines())!!
+        val b=ScanRules.parse(lines("317-2053-R56","40"))!!
+        assertNull(c.observe(a,100))
+        assertNotNull(c.observe(a,200))
+        assertNull(c.observe(b,300))
+        assertNull(c.observe(a,400)) // one bad frame cannot unlock
+        assertNull(c.observe(b,500))
+        assertNotNull(c.observe(b,600)) // second same new code: count immediately
+        assertNull(c.observe(b,700))
+    }
+    @Test fun rapidSameSkuRequiresBlankFrameToRearm() {
+        val c=AutoCounter(clearAfterMs=450L)
+        val a=ScanRules.parse(lines())!!
+        assertNull(c.observe(a,100))
+        assertNotNull(c.observe(a,200))
+        for(i in 1..10) assertNull(c.observe(a,200+i*100L))
+        assertNull(c.observe(null,1300L,true))
+        assertNull(c.observe(null,1800L,true))
+        assertNull(c.observe(a,1900L))
+        assertNotNull(c.observe(a,2000L))
+    }
+
 }
