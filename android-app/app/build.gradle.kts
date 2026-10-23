@@ -9,14 +9,14 @@ android {
         applicationId = "com.kalitemall.deposayim"
         minSdk = 23
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.2-dual-roi"
+        versionCode = 4
+        versionName = "1.4-motion-tolerant"
     }
     // GitHub Actions debug APK is signed by an ephemeral key.
     // Install this beta alongside the existing app so its unsynced scans remain safe.
     buildTypes {
         getByName("debug") {
-            applicationIdSuffix = ".dualroi"
+            applicationIdSuffix = ".motionv14"
         }
     }
     compileOptions {

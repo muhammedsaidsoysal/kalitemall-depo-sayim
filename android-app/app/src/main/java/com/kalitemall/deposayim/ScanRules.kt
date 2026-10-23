@@ -15,14 +15,30 @@ object ScanRules {
 
     fun normalize(raw: String) = raw.uppercase(Locale.ROOT).replace('İ','I').replace('ı','I')
 
-    /** Each side is already isolated by image cropping. Never mix another product's size. */
+    /** Each region is isolated by bitmap cropping; product name is unnecessary. */
     fun codeFromRegion(lines: List<OcrLine>): String? {
-        val found = lines.flatMap { line ->
-            skuRe.findAll(normalize(line.text)).map { m ->
-                "${m.groupValues[1]}-${m.groupValues[2]}-${m.groupValues[3]}${m.groupValues[4]}"
-            }.toList()
+        fun collect(text: String): List<String> = skuRe.findAll(normalize(text)).map { m ->
+            "${m.groupValues[1]}-${m.groupValues[2]}-${m.groupValues[3]}${m.groupValues[4]}"
+        }.toList()
+        val direct = lines.flatMap { collect(it.text) }.distinct()
+        if(direct.size > 1) return null // Never guess between two product codes.
+        if(direct.size == 1) return direct.single()
+        // ML Kit occasionally divides a printed code into adjacent fragments,
+        // e.g. '317-2053-' and 'R56'. Combine ONLY fragments from a single
+        // spatial text line; not separate rows or other labels.
+        val spatialGroups = lines.groupBy { it.group }
+        val stitched = spatialGroups.values.flatMap { groupLines ->
+            groupLines.groupBy { (it.centerY * 18f).toInt() }.values.flatMap { row ->
+                if(row.size !in 2..4) emptyList()
+                else {
+                    val sorted=row.sortedBy { it.centerX }
+                    val horizontal=sorted.last().centerX-sorted.first().centerX
+                    if(horizontal>0.60f) emptyList()
+                    else collect(sorted.joinToString("") { it.text.replace(" ", "") })
+                }
+            }
         }.distinct()
-        return found.singleOrNull()
+        return stitched.singleOrNull()
     }
 
     fun sizeFromRegion(lines: List<OcrLine>): String? {
@@ -75,43 +91,95 @@ object ScanRules {
     }
 }
 
-/** Two matching frames before save. Keeps same visible physical label locked. */
-class AutoCounter(private val threshold: Float = ScanRules.MIN_SCORE, private val clearAfterMs: Long = 600L) {
+/**
+ * Keep successfully decoded text visible during short focus/motion interruptions.
+ * Display ONLY: Never combine cached partial OCR into an automatic scan candidate.
+ */
+class ReadingHold(private val holdMs: Long = 1300L) {
+    private var code: String? = null
+    private var size: String? = null
+    private var codeAt = -1L
+    private var sizeAt = -1L
+
+    fun update(now: Long, newCode: String?, newSize: String?): Pair<String?, String?> {
+        if(newCode != null) {
+            if(newCode != code) {
+                code = newCode
+                codeAt = now
+                // A different SKU must never inherit an old size as a "confirmed" pairing.
+                size = null
+                sizeAt = -1L
+            } else codeAt = now
+        }
+        if(newSize != null) { size = newSize; sizeAt = now }
+        if(now - codeAt > holdMs) code = null
+        if(now - sizeAt > holdMs) size = null
+        return code to size
+    }
+    fun reset() { code = null; size = null; codeAt = -1L; sizeAt = -1L }
+}
+
+/**
+ * Two independent correct OCR observations within a short window (not necessarily
+ * consecutive frames). Brief unreadable frames caused by movement are tolerated.
+ * Different decoded keys abort the proposal. A counted label stays locked until
+ * removed from view for the configured blank interval or another label appears.
+ */
+class AutoCounter(
+    private val threshold: Float = ScanRules.MIN_SCORE,
+    private val clearAfterMs: Long = 600L,
+    private val matchWindowMs: Long = 1400L
+) {
     private var proposed: String? = null
     private var matches = 0
+    private var lastValidAt = -1L
     private var locked: String? = null
     private var blankSince = -1L
 
-    /** isBlankScene means NO text in the central guide, not merely failed code parsing. */
     fun observe(candidate: ScanCandidate?, now: Long, isBlankScene: Boolean = false): ScanCandidate? {
         val key = candidate?.let { "${it.sku}|${it.size}" }
-        if (locked != null && key == locked) {
+        if(locked != null && key == locked) {
             blankSince = -1L
             return null
         }
-        if (locked != null) {
-            if (key != null && key != locked) { // visibly different SKU/size
+        if(locked != null) {
+            if(key != null && key != locked) {
                 locked = null
                 blankSince = -1L
-            } else if (key == null && isBlankScene) {
-                if (blankSince < 0L) blankSince = now
-                if (now - blankSince >= clearAfterMs) { locked = null; blankSince = -1L }
-            } else blankSince = -1L // still other text in view; don't rearm by accident
+            } else if(key == null && isBlankScene) {
+                if(blankSince < 0L) blankSince = now
+                if(now - blankSince >= clearAfterMs) {
+                    locked = null
+                    blankSince = -1L
+                }
+            } else blankSince = -1L
         }
-        if (locked != null) return null
-        if (candidate == null || candidate.score < threshold) {
-            proposed = null; matches = 0
+        if(locked != null) return null
+
+        if(proposed != null && lastValidAt >= 0L && now - lastValidAt > matchWindowMs) {
+            proposed = null; matches = 0; lastValidAt = -1L
+        }
+        if(candidate == null) {
+            // Do NOT discard the earlier valid match for a single blurred frame.
             return null
         }
-        if (proposed == key) matches++ else { proposed = key; matches = 1 }
-        if (matches < 2) return null
-        proposed = null; matches = 0
+        if(candidate.score < threshold) {
+            proposed = null; matches = 0; lastValidAt = -1L
+            return null
+        }
+        if(proposed == key) matches++ else { proposed = key; matches = 1 }
+        lastValidAt = now
+        if(matches < 2) return null
+        proposed = null; matches = 0; lastValidAt = -1L
         locked = key; blankSince = -1L
         return candidate
     }
     fun lockCurrent(sku: String, size: String) {
-        proposed = null; matches = 0
+        proposed = null; matches = 0; lastValidAt = -1L
         locked = "${sku}|${size}"; blankSince = -1L
     }
-    fun reset() { proposed = null; matches = 0; locked = null; blankSince = -1L }
+    fun reset() {
+        proposed = null; matches = 0; lastValidAt = -1L
+        locked = null; blankSince = -1L
+    }
 }

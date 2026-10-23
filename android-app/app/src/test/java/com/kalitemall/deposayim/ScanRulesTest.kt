@@ -46,6 +46,40 @@ class ScanRulesTest {
         assertNotNull(c.observe(good,1300))
     }
 
+
+    @Test fun momentaryBlurBetweenGoodFramesKeepsProposal() {
+        val c=AutoCounter()
+        val good=ScanRules.parse(lines())!!
+        assertNull(c.observe(good,0))
+        assertNull(c.observe(null,240,false))
+        assertNotNull(c.observe(good,640))
+        assertNull(c.observe(good,700)) // Already counted: label stays locked
+    }
+    @Test fun longBlurCannotJoinStaleReadings() {
+        val c=AutoCounter()
+        val good=ScanRules.parse(lines())!!
+        assertNull(c.observe(good,0))
+        assertNull(c.observe(null,1550,false))
+        assertNull(c.observe(good,1700))
+        assertNotNull(c.observe(good,1790))
+    }
+    @Test fun contradictoryReadingResetsProposal() {
+        val c=AutoCounter()
+        val a=ScanRules.parse(lines())!!
+        val b=ScanRules.parse(lines("317-2053-R56","40"))!!
+        assertNull(c.observe(a,0))
+        assertNull(c.observe(b,200))
+        assertNull(c.observe(null,300,false))
+        assertNotNull(c.observe(b,410))
+    }
+    @Test fun shakeHoldDisplaysLastCodeButNeverCreatesCount() {
+        val h=ReadingHold(1300)
+        assertEquals("317-2053-R56" to "40",h.update(0,"317-2053-R56","40"))
+        assertEquals("317-2053-R56" to "40",h.update(600,null,null))
+        assertEquals(null to null,h.update(1400,null,null))
+        assertEquals("346-3054-R18" to null,h.update(1500,"346-3054-R18",null))
+    }
+
     @Test fun dualRegionsAcceptProductAndSizeWithoutColor() {
         val code=listOf(OcrLine("317-2053-R56",.72f,.5f,.5f,0))
         val size=listOf(OcrLine("40",.68f,.5f,.5f,1))
@@ -76,4 +110,19 @@ class ScanRulesTest {
         assertNull(counter.observe(candidate,150))
     }
 
+    @Test fun partialSkuReadDoesNotNeedProductDescriptionOrSize() {
+        assertEquals("317-2053-R56", ScanRules.codeFromRegion(listOf(
+            OcrLine("317-2053-R56",.72f,.48f,.45f,0))))
+        assertNull(ScanRules.parseDual(listOf(OcrLine("317-2053-R56",.72f,.48f,.45f,0)),emptyList()))
+    }
+    @Test fun splitSkuFragmentsOnSameLine() {
+        assertEquals("317-2053-R56",ScanRules.codeFromRegion(listOf(
+            OcrLine("317-2053-",.7f,.37f,.42f,0),
+            OcrLine("R56",.7f,.56f,.42f,0))))
+    }
+    @Test fun doesNotGuessFromMultipleDifferentCodes() {
+        assertNull(ScanRules.codeFromRegion(listOf(
+            OcrLine("317-2053-R56",.70f,.4f,.42f,0),
+            OcrLine("346-3054-R18",.75f,.4f,.50f,0))))
+    }
 }

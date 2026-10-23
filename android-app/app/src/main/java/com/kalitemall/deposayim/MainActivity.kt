@@ -14,6 +14,9 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.RectF
 import android.view.View
+import android.view.MotionEvent
+import androidx.camera.core.FocusMeteringAction
+import java.util.concurrent.TimeUnit
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.UseCaseGroup
 import java.util.concurrent.atomic.AtomicBoolean
@@ -40,6 +43,8 @@ class MainActivity : AppCompatActivity() {
     private val recognizer=TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
     private val analyzerExecutor=Executors.newSingleThreadExecutor()
     private val counter=AutoCounter()
+    private val readingHold=ReadingHold()
+    private var lastFocusAt = -5000L
     private var provider:ProcessCameraProvider?=null
     private var cameraOn=false
     private var boundCamera: Camera?=null
@@ -90,6 +95,7 @@ class MainActivity : AppCompatActivity() {
             fullFrameMode=enabled
             prefs.edit().putBoolean("full_frame_fallback",enabled).apply()
             counter.reset()
+            readingHold.reset()
             updateScanOverlays()
             ui.cameraStatus.text=if(enabled) "Tam etiket modu" else "İki alanla hızlı tarama"
         }
@@ -99,6 +105,14 @@ class MainActivity : AppCompatActivity() {
         ui.sizeTarget.addOnLayoutChangeListener { _,_,_,_,_,_,_,_,_ -> updateRoiBounds() }
         ui.cameraPreview.post { updateRoiBounds() }
         ui.manualAddButton.setOnClickListener { addManualCount() }
+        // Tap a label on preview to ask CameraX for autofocus at that position.
+        ui.cameraPreview.setOnTouchListener { _, event ->
+            if(event.action == MotionEvent.ACTION_UP) {
+                focusAt(event.x, event.y)
+                true
+            } else event.action == MotionEvent.ACTION_DOWN
+        }
+        ui.focusButton.setOnClickListener { focusOnTarget() }
         ui.cameraButton.setOnClickListener { if(cameraOn) stopCamera() else requestCamera() }
         ui.torchButton.setOnClickListener {
             val camera=boundCamera
@@ -189,7 +203,9 @@ class MainActivity : AppCompatActivity() {
                 boundCamera=p.bindToLifecycle(this,CameraSelector.DEFAULT_BACK_CAMERA,group)
                 cameraOn=true
                 counter.reset()
+                readingHold.reset()
                 ui.cameraButton.text="Kamerayı durdur"
+                ui.cameraPreview.postDelayed({ focusOnTarget() },400L)
                 ui.cameraStatus.text="Hızlı tarama açık · iki yeşil kutuyu etikete hizala"
             } catch(e:Exception) { ui.cameraStatus.text="Kamera açılamadı: ${e.message}";cameraOn=false }
         },ContextCompat.getMainExecutor(this))
@@ -283,28 +299,60 @@ class MainActivity : AppCompatActivity() {
         boundCamera?.cameraControl?.enableTorch(false)
         boundCamera=null;torchEnabled=false
         ui.torchButton.text="Fener"
-        provider?.unbindAll();cameraOn=false;counter.reset()
+        provider?.unbindAll();cameraOn=false;counter.reset();readingHold.reset()
         ui.cameraButton.text="Kamerayı aç"
         ui.cameraStatus.text="Kamera durduruldu"
     }
+    /** Focus/exposure metering centered between the two printed fields. The action
+     * automatically cancels after two seconds to restore continuous autofocus.
+     * No manual tap is needed for every label.
+     */
+    private fun focusOnTarget() {
+        val view=ui.cameraPreview
+        if(view.width<=0 || view.height<=0) return
+        val focusY = view.height / 2f
+        focusAt(view.width / 2f, focusY)
+    }
+    private fun focusAt(x:Float,y:Float) {
+        val camera=boundCamera ?: return
+        val now=SystemClock.elapsedRealtime()
+        if(now-lastFocusAt<900L) return // Avoid repeated AF hunting.
+        lastFocusAt=now
+        try {
+            val point=ui.cameraPreview.meteringPointFactory.createPoint(x,y,0.22f)
+            val action=FocusMeteringAction.Builder(point,
+                FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE)
+                .setAutoCancelDuration(2L,TimeUnit.SECONDS).build()
+            camera.cameraControl.startFocusAndMetering(action)
+            ui.cameraStatus.text="Etikete odaklanıyor…"
+        } catch(_:Exception) { /* Device may not support metering. OCR continues. */ }
+    }
+
     private fun onReading(candidate:ScanCandidate?, durationMs:Long, blankScene:Boolean,
                           rawOcr:String, partialSku:String?=null, partialSize:String?=null) {
         if(!cameraOn) return
         latestReading=candidate
         ui.rawOcrText.text="Kameranın gördüğü yazı: "+
             rawOcr.replace('\n',' ').replace('\r',' ').take(200).ifBlank { "—" }
-        val seenSku=candidate?.sku ?: partialSku
-        val seenSize=candidate?.size ?: partialSize
+        val (seenSku, seenSize)=readingHold.update(SystemClock.elapsedRealtime(),
+            candidate?.sku ?: partialSku, candidate?.size ?: partialSize)
         ui.readStatusText.text="STOK: ${seenSku ?: "—"}   BEDEN: ${seenSize ?: "—"}"
-        // The fields are only suggestions; operator edits remain untouched.
-        if(!ui.detectedSkuInput.hasFocus() && !ui.detectedSizeInput.hasFocus()) {
-            if(seenSku!=null) {
-                if(ui.detectedSkuInput.text.toString()!=seenSku && seenSize==null)
-                    ui.detectedSizeInput.setText("")
+        // Code and size update independently. Never wait for the product name or
+        // for both fields to be present just to show a valid stock code.
+        // An operator actively editing one field is never overwritten in that field.
+        if(seenSku!=null && !ui.detectedSkuInput.hasFocus()) {
+            val oldSku=ui.detectedSkuInput.text.toString()
+            if(oldSku!=seenSku) {
                 ui.detectedSkuInput.setText(seenSku)
+                // Prevent stale size belonging to the previous SKU from being
+                // accidentally confirmed as a manual count.
+                if(seenSize==null && !ui.detectedSizeInput.hasFocus())
+                    ui.detectedSizeInput.setText("")
             }
-            if(seenSize!=null) ui.detectedSizeInput.setText(seenSize)
         }
+        if(seenSize!=null && !ui.detectedSizeInput.hasFocus() &&
+                ui.detectedSizeInput.text.toString()!=seenSize)
+            ui.detectedSizeInput.setText(seenSize)
         val box=ui.boxInput.text.toString().trim()
         if(box.isBlank()) {
             ui.cameraStatus.text="Önce kutu/raf gir; kayıt durduruldu"
@@ -313,7 +361,9 @@ class MainActivity : AppCompatActivity() {
         }
         if(candidate==null) {
             counter.observe(null,SystemClock.elapsedRealtime(),blankScene)
-            ui.cameraStatus.text="Etiket aranıyor · OCR ${durationMs}ms"
+            ui.cameraStatus.text=if(seenSku!=null || seenSize!=null)
+                "Kısa titreşim / odak kaybı · önceki okuma korunuyor · ${durationMs}ms"
+                else "Etiket aranıyor · OCR ${durationMs}ms"
             return
         }
         if(!ui.autoSwitch.isChecked || ui.detectedSkuInput.hasFocus() || ui.detectedSizeInput.hasFocus()) {
