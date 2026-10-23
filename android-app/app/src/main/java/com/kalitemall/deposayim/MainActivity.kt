@@ -11,6 +11,12 @@ import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.RectF
+import android.view.View
+import androidx.camera.core.ImageProxy
+import androidx.camera.core.UseCaseGroup
+import java.util.concurrent.atomic.AtomicBoolean
 import android.util.Size
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -38,6 +44,10 @@ class MainActivity : AppCompatActivity() {
     private var cameraOn=false
     private var boundCamera: Camera?=null
     private var torchEnabled=false
+    private var latestReading: ScanCandidate? = null
+    @Volatile private var scanZones: ScanZones? = null
+    private val ocrBusy=AtomicBoolean(false)
+    @Volatile private var fullFrameMode=false
     private var tone:ToneGenerator?=null
     private val timer=Handler(Looper.getMainLooper())
     private val prefs by lazy { getSharedPreferences("km_ui", MODE_PRIVATE) }
@@ -67,6 +77,28 @@ class MainActivity : AppCompatActivity() {
         ui.boxInput.setText(prefs.getString("box","KUTU-1"))
         ui.scriptUrlInput.setText(sheets.url)
         ui.secretInput.setText(sheets.secret)
+        ui.autoSwitch.isChecked=prefs.getBoolean("auto_enabled",true)
+        ui.autoSwitch.setOnCheckedChangeListener { _, enabled ->
+            prefs.edit().putBoolean("auto_enabled",enabled).apply()
+            if(!enabled) counter.reset()
+            ui.cameraStatus.text=if(enabled) "Otomatik sayım açık" else "Manuel sayım modu"
+        }
+        fullFrameMode=prefs.getBoolean("full_frame_fallback",false)
+        ui.fullFrameSwitch.isChecked=fullFrameMode
+        updateScanOverlays()
+        ui.fullFrameSwitch.setOnCheckedChangeListener { _, enabled ->
+            fullFrameMode=enabled
+            prefs.edit().putBoolean("full_frame_fallback",enabled).apply()
+            counter.reset()
+            updateScanOverlays()
+            ui.cameraStatus.text=if(enabled) "Tam etiket modu" else "İki alanla hızlı tarama"
+        }
+        ui.cameraPreview.addOnLayoutChangeListener { _,_,_,_,_,_,_,_,_ -> updateRoiBounds() }
+        ui.dualZonesOverlay.addOnLayoutChangeListener { _,_,_,_,_,_,_,_,_ -> updateRoiBounds() }
+        ui.codeTarget.addOnLayoutChangeListener { _,_,_,_,_,_,_,_,_ -> updateRoiBounds() }
+        ui.sizeTarget.addOnLayoutChangeListener { _,_,_,_,_,_,_,_,_ -> updateRoiBounds() }
+        ui.cameraPreview.post { updateRoiBounds() }
+        ui.manualAddButton.setOnClickListener { addManualCount() }
         ui.cameraButton.setOnClickListener { if(cameraOn) stopCamera() else requestCamera() }
         ui.torchButton.setOnClickListener {
             val camera=boundCamera
@@ -105,6 +137,30 @@ class MainActivity : AppCompatActivity() {
             startCamera()
         else cameraPermission.launch(Manifest.permission.CAMERA)
     }
+    private fun updateScanOverlays() {
+        ui.dualZonesOverlay.visibility=if(fullFrameMode) View.GONE else View.VISIBLE
+        ui.fullFrameGuide.visibility=if(fullFrameMode) View.VISIBLE else View.GONE
+        ui.cameraPreview.post { updateRoiBounds() }
+    }
+
+    private fun updateRoiBounds() {
+        val preview=ui.cameraPreview
+        if(preview.width<=0 || preview.height<=0 || ui.codeTarget.width<=0 || ui.sizeTarget.width<=0) return
+        val origin=IntArray(2)
+        preview.getLocationInWindow(origin)
+        fun norm(view:View): NormRect {
+            val xy=IntArray(2)
+            view.getLocationInWindow(xy)
+            return NormRect(
+                ((xy[0]-origin[0]).toFloat()/preview.width).coerceIn(0f,1f),
+                ((xy[1]-origin[1]).toFloat()/preview.height).coerceIn(0f,1f),
+                ((xy[0]-origin[0]+view.width).toFloat()/preview.width).coerceIn(0f,1f),
+                ((xy[1]-origin[1]+view.height).toFloat()/preview.height).coerceIn(0f,1f)
+            )
+        }
+        scanZones=ScanZones(norm(ui.codeTarget),norm(ui.sizeTarget))
+    }
+
     @Suppress("DEPRECATION")
     private fun startCamera() {
         val box=ui.boxInput.text.toString().trim()
@@ -115,48 +171,113 @@ class MainActivity : AppCompatActivity() {
         future.addListener({
             try {
                 val p=future.get()
+                val viewPort=ui.cameraPreview.viewPort
+                if(viewPort==null) {
+                    ui.cameraStatus.text="Önizleme hazırlanıyor; kamerayı yeniden aç"
+                    return@addListener
+                }
                 provider=p
                 val preview=Preview.Builder().build().also { it.setSurfaceProvider(ui.cameraPreview.surfaceProvider) }
-                // Limit camera data volume; never run OCR on 48 MP still photos.
                 val analysis=ImageAnalysis.Builder()
                     .setTargetResolution(Size(1280,720))
                     .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                     .build()
-                analysis.setAnalyzer(analyzerExecutor) { imageProxy ->
-                    val mediaImage=imageProxy.image
-                    if(mediaImage==null) { imageProxy.close();return@setAnalyzer }
-                    val rotation=imageProxy.imageInfo.rotationDegrees
-                    val width=if(rotation==90 || rotation==270) imageProxy.height else imageProxy.width
-                    val height=if(rotation==90 || rotation==270) imageProxy.width else imageProxy.height
-                    val input=InputImage.fromMediaImage(mediaImage,rotation)
-                    val started=SystemClock.elapsedRealtime()
-                    recognizer.process(input)
-                        .addOnSuccessListener { text ->
-                            val lines=buildList {
-                                text.textBlocks.forEachIndexed { blockIndex,block ->
-                                    block.lines.forEach { line ->
-                                        val r=line.boundingBox
-                                        if(r!=null) add(OcrLine(line.text,line.confidence,
-                                            r.exactCenterX()/width.toFloat(),r.exactCenterY()/height.toFloat(),blockIndex))
-                                    }
-                                }
-                            }
-                            val found=ScanRules.parse(lines)
-                            // Called on UI thread by ML Kit task listener.
-                            onReading(found,SystemClock.elapsedRealtime()-started,
-                                lines.none { it.centerX in 0.08f..0.92f && it.centerY in 0.12f..0.88f })
-                        }
-                        .addOnFailureListener { e -> ui.cameraStatus.text="OCR hatası: ${e.message}" }
-                        .addOnCompleteListener { imageProxy.close() }
-                }
+                analysis.setAnalyzer(analyzerExecutor) { imageProxy -> analyzeFrame(imageProxy) }
                 p.unbindAll()
-                boundCamera=p.bindToLifecycle(this,CameraSelector.DEFAULT_BACK_CAMERA,preview,analysis)
+                val group=UseCaseGroup.Builder().addUseCase(preview).addUseCase(analysis)
+                    .setViewPort(viewPort).build()
+                boundCamera=p.bindToLifecycle(this,CameraSelector.DEFAULT_BACK_CAMERA,group)
                 cameraOn=true
                 counter.reset()
                 ui.cameraButton.text="Kamerayı durdur"
-                ui.cameraStatus.text="Canlı tarama açık · etiketi çerçeveye getir"
+                ui.cameraStatus.text="Hızlı tarama açık · iki yeşil kutuyu etikete hizala"
             } catch(e:Exception) { ui.cameraStatus.text="Kamera açılamadı: ${e.message}";cameraOn=false }
         },ContextCompat.getMainExecutor(this))
+    }
+
+    private fun analyzeFrame(imageProxy: ImageProxy) {
+        if (!cameraOn || !ocrBusy.compareAndSet(false,true)) {
+            imageProxy.close()
+            return
+        }
+        val started=SystemClock.elapsedRealtime()
+        if(fullFrameMode) {
+            val cameraImage=imageProxy.image
+            if(cameraImage==null) {
+                ocrBusy.set(false);imageProxy.close();return
+            }
+            val rotation=imageProxy.imageInfo.rotationDegrees
+            val width=if(rotation==90 || rotation==270) imageProxy.height else imageProxy.width
+            val height=if(rotation==90 || rotation==270) imageProxy.width else imageProxy.height
+            try {
+                val input=InputImage.fromMediaImage(cameraImage,rotation)
+                recognizer.process(input)
+                    .addOnSuccessListener { text ->
+                        val lines=buildList {
+                            text.textBlocks.forEachIndexed { blockIndex,block ->
+                                block.lines.forEach { line ->
+                                    val r=line.boundingBox
+                                    if(r!=null) add(OcrLine(line.text,line.confidence,
+                                        r.exactCenterX()/width.toFloat(),r.exactCenterY()/height.toFloat(),blockIndex))
+                                }
+                            }
+                        }
+                        val found=ScanRules.parse(lines)
+                        onReading(found,SystemClock.elapsedRealtime()-started,
+                            lines.none { it.centerX in .08f..92f && it.centerY in .12f..88f },text.text)
+                    }
+                    .addOnFailureListener { e -> ui.cameraStatus.text="OCR hatası: ${e.message}" }
+                    .addOnCompleteListener { imageProxy.close(); ocrBusy.set(false) }
+            } catch(e:Exception) {
+                imageProxy.close();ocrBusy.set(false)
+            }
+            return
+        }
+        val zones=scanZones
+        if(zones==null || !zones.code.valid() || !zones.size.valid()) {
+            imageProxy.close();ocrBusy.set(false);return
+        }
+        val prepared: CroppedOcrFrame
+        try {
+            prepared=RoiScanner.prepare(imageProxy,zones)
+        } catch(e:Exception) {
+            imageProxy.close();ocrBusy.set(false)
+            runOnUiThread { ui.cameraStatus.text="Bölge kesme hatası: ${e.message}" }
+            return
+        }
+        // InputImage.fromBitmap owns the independent image; release ImageProxy immediately.
+        imageProxy.close()
+        val input=InputImage.fromBitmap(prepared.bitmap,0)
+        try {
+            recognizer.process(input)
+                .addOnSuccessListener { result ->
+                    val codeLines=mutableListOf<OcrLine>()
+                    val sizeLines=mutableListOf<OcrLine>()
+                    result.textBlocks.forEachIndexed { group,block ->
+                        block.lines.forEach { line ->
+                            val box=line.boundingBox ?: return@forEach
+                            val l=OcrLine(line.text,line.confidence,
+                                box.exactCenterX()/prepared.bitmap.width,
+                                box.exactCenterY()/prepared.bitmap.height,group)
+                            if(box.exactCenterX()<prepared.sizeStartX-prepared.gapPx/2f)
+                                codeLines.add(l)
+                            else if(box.exactCenterX()>prepared.sizeStartX-prepared.gapPx/2f)
+                                sizeLines.add(l)
+                        }
+                    }
+                    val code=ScanRules.codeFromRegion(codeLines)
+                    val size=ScanRules.sizeFromRegion(sizeLines)
+                    val accepted=ScanRules.parseDual(codeLines,sizeLines)
+                    val raw="KOD: "+codeLines.joinToString(" ") { it.text }+
+                        " | BEDEN: "+sizeLines.joinToString(" ") { it.text }
+                    onReading(accepted,SystemClock.elapsedRealtime()-started,
+                        codeLines.isEmpty() && sizeLines.isEmpty(),raw,code,size)
+                }
+                .addOnFailureListener { e -> ui.cameraStatus.text="OCR hatası: ${e.message}" }
+                .addOnCompleteListener { prepared.bitmap.recycle(); ocrBusy.set(false) }
+        } catch(e:Exception) {
+            prepared.bitmap.recycle();ocrBusy.set(false)
+        }
     }
     private fun stopCamera() {
         boundCamera?.cameraControl?.enableTorch(false)
@@ -166,12 +287,27 @@ class MainActivity : AppCompatActivity() {
         ui.cameraButton.text="Kamerayı aç"
         ui.cameraStatus.text="Kamera durduruldu"
     }
-    @Suppress("DEPRECATION")
-    private fun onReading(candidate:ScanCandidate?, durationMs:Long, blankScene:Boolean) {
+    private fun onReading(candidate:ScanCandidate?, durationMs:Long, blankScene:Boolean,
+                          rawOcr:String, partialSku:String?=null, partialSize:String?=null) {
         if(!cameraOn) return
+        latestReading=candidate
+        ui.rawOcrText.text="Kameranın gördüğü yazı: "+
+            rawOcr.replace('\n',' ').replace('\r',' ').take(200).ifBlank { "—" }
+        val seenSku=candidate?.sku ?: partialSku
+        val seenSize=candidate?.size ?: partialSize
+        ui.readStatusText.text="STOK: ${seenSku ?: "—"}   BEDEN: ${seenSize ?: "—"}"
+        // The fields are only suggestions; operator edits remain untouched.
+        if(!ui.detectedSkuInput.hasFocus() && !ui.detectedSizeInput.hasFocus()) {
+            if(seenSku!=null) {
+                if(ui.detectedSkuInput.text.toString()!=seenSku && seenSize==null)
+                    ui.detectedSizeInput.setText("")
+                ui.detectedSkuInput.setText(seenSku)
+            }
+            if(seenSize!=null) ui.detectedSizeInput.setText(seenSize)
+        }
         val box=ui.boxInput.text.toString().trim()
         if(box.isBlank()) {
-            ui.cameraStatus.text="Önce kutu/raf gir, otomatik kayıt durduruldu"
+            ui.cameraStatus.text="Önce kutu/raf gir; kayıt durduruldu"
             counter.observe(null,SystemClock.elapsedRealtime(),blankScene)
             return
         }
@@ -180,22 +316,48 @@ class MainActivity : AppCompatActivity() {
             ui.cameraStatus.text="Etiket aranıyor · OCR ${durationMs}ms"
             return
         }
-        val pct=(candidate.score*100).toInt()
-        if(candidate.score < ScanRules.MIN_SCORE) {
-            counter.observe(candidate,SystemClock.elapsedRealtime(),blankScene)
-            ui.cameraStatus.text="Düşük güven %$pct · otomatik kayıt yok · ${durationMs}ms"
+        if(!ui.autoSwitch.isChecked || ui.detectedSkuInput.hasFocus() || ui.detectedSizeInput.hasFocus()) {
+            ui.cameraStatus.text="${candidate.sku} ${candidate.size} · manuel kontrol · ${durationMs}ms"
             return
         }
         val accepted=counter.observe(candidate,SystemClock.elapsedRealtime(),blankScene)
         if(accepted==null) {
-            ui.cameraStatus.text="${candidate.sku} ${candidate.size} · %$pct · doğrulanıyor / kilitli · ${durationMs}ms"
+            ui.cameraStatus.text="${candidate.sku} ${candidate.size} · doğrulanıyor / kilitli · ${durationMs}ms"
             return
         }
+        persistCount(accepted.sku,accepted.size,accepted.score,accepted.rawText,"OCR")
+    }
+
+    private fun addManualCount() {
+        val sku=ScanRules.normalize(ui.detectedSkuInput.text.toString()).trim()
+            .replace('–','-').replace('—','-').replace(Regex("\\s+"),"")
+        val size=ScanRules.normalize(ui.detectedSizeInput.text.toString()).trim()
+            .replace("STANDART","STD")
+        val skuPattern=Regex("[0-9]{3}-[0-9]{4}-[RKB][0-9]{2}")
+        val sizePattern=Regex("STD|SM|LXL|XS|S|M|L|XL|XXL|XXXL|3XL|4XL|[0-9]{2}")
+        if(!skuPattern.matches(sku) || !sizePattern.matches(size)) {
+            toast("Ürün kodunu ve bedeni kontrol et: örn. 317-2053-R56 / 40")
+            return
+        }
+        val box=ui.boxInput.text.toString().trim()
+        if(box.isBlank()) { toast("Kutu/raf zorunlu");return }
+        // Lock the physical label already in view; next OCR frame must not double count.
+        val visible=latestReading
+        counter.lockCurrent(visible?.sku ?: sku,visible?.size ?: size)
+        ui.detectedSkuInput.clearFocus()
+        ui.detectedSizeInput.clearFocus()
+        persistCount(sku,size,visible?.score ?: 0f,ui.rawOcrText.text.toString(),"MANUEL")
+    }
+
+    @Suppress("DEPRECATION")
+    private fun persistCount(sku:String,size:String,score:Float,raw:String,source:String) {
         try {
-            store.add(accepted.sku,accepted.size,box,accepted.score,accepted.rawText)
+            val box=ui.boxInput.text.toString().trim()
+            if(box.isBlank()) { toast("Kutu/raf zorunlu");return }
+            store.add(sku,size,box,score,raw,source)
             prefs.edit().putString("box",box).apply()
-            ui.lastScanText.text="✓ +1 ${accepted.sku} · ${accepted.size}"
-            ui.cameraStatus.text="SAYILDI · $pct% · yeni etiket göster · OCR ${durationMs}ms"
+            ui.lastScanText.text="✓ +1 ${sku} · ${size} (${source})"
+            ui.cameraStatus.text="SAYILDI · ${sku} ${size} · yeni etiket göster"
             tone?.startTone(ToneGenerator.TONE_PROP_BEEP,110)
             try {
                 val v=getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
@@ -204,10 +366,10 @@ class MainActivity : AppCompatActivity() {
             } catch(_:Exception) { }
             updateTotals()
             ui.syncStatus.text="${store.pendingCount()} kayıt gönderilmeyi bekliyor"
-            sheets.sync() // uses its own executor; never blocks OCR/UI
+            sheets.sync()
         } catch(e:Exception) {
             ui.cameraStatus.text="KAYIT BAŞARISIZ: ${e.message}"
-            stopCamera() // do not silently skip inventory entries
+            stopCamera()
         }
     }
     private fun updateTotals() {

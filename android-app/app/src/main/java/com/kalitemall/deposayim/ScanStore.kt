@@ -35,9 +35,9 @@ class ScanStore(context: Context) : SQLiteOpenHelper(context, "km_native_scan.db
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         throw IllegalStateException("Database migration required; never destroy inventory data")
     }
-    fun add(sku: String, size: String, box: String, confidence: Float, raw: String): CountEvent {
+    fun add(sku: String, size: String, box: String, confidence: Float, raw: String, source: String = "OCR"): CountEvent {
         val item = CountEvent(UUID.randomUUID().toString(), System.currentTimeMillis(), sku, size,
-            box, 1, "OCR", confidence, raw.take(800), "", false)
+            box, 1, source, confidence, raw.take(800), "", false)
         insert(item)
         return item
     }

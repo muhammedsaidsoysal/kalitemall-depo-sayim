@@ -8,12 +8,41 @@ data class OcrLine(val text: String, val confidence: Float, val centerX: Float, 
 data class ScanCandidate(val sku: String, val size: String, val score: Float, val rawText: String)
 
 object ScanRules {
-    const val MIN_SCORE = 0.85f
+    const val MIN_SCORE = 0f // No OCR confidence cutoff; rely on consecutive matching reads.
     // Distinguish the KaliteMall SKU from PodyumPlus raw barcode (SM-98035).
     private val skuRe = Regex("(?<![A-Z0-9])([0-9]{3})\\s*[-–—]\\s*([0-9]{4})\\s*[-–—]\\s*([RKB])\\s*([0-9]{2})(?![A-Z0-9])")
     private val sizeRe = Regex("(?<![A-Z0-9])(STANDART|XXXL|XXL|LXL|STD|SM|4XL|3XL|XS|XL|XXL|S|M|L|(?:3[4-9]|4[0-9]|5[0-9]|60))(?![A-Z0-9])")
 
     fun normalize(raw: String) = raw.uppercase(Locale.ROOT).replace('İ','I').replace('ı','I')
+
+    /** Each side is already isolated by image cropping. Never mix another product's size. */
+    fun codeFromRegion(lines: List<OcrLine>): String? {
+        val found = lines.flatMap { line ->
+            skuRe.findAll(normalize(line.text)).map { m ->
+                "${m.groupValues[1]}-${m.groupValues[2]}-${m.groupValues[3]}${m.groupValues[4]}"
+            }.toList()
+        }.distinct()
+        return found.singleOrNull()
+    }
+
+    fun sizeFromRegion(lines: List<OcrLine>): String? {
+        val found = lines.flatMap { line ->
+            sizeRe.findAll(normalize(line.text)).map { m ->
+                when(m.value) { "STANDART" -> "STD"; else -> m.value }
+            }.toList()
+        }.distinct()
+        return found.singleOrNull()
+    }
+
+    fun parseDual(codeLines: List<OcrLine>, sizeLines: List<OcrLine>): ScanCandidate? {
+        val sku = codeFromRegion(codeLines) ?: return null
+        val size = sizeFromRegion(sizeLines) ?: return null
+        val confidence = (codeLines + sizeLines).map { it.confidence }
+            .filter { it in 0f..1f }.minOrNull() ?: 0f
+        return ScanCandidate(sku, size, confidence,
+            ("KOD: " + codeLines.joinToString(" ") { it.text } + " | BEDEN: " +
+             sizeLines.joinToString(" ") { it.text }).take(800))
+    }
 
     fun parse(lines: List<OcrLine>): ScanCandidate? {
         val inFrame = lines.filter { it.centerX in 0.08f..0.92f && it.centerY in 0.12f..0.88f }
@@ -79,6 +108,10 @@ class AutoCounter(private val threshold: Float = ScanRules.MIN_SCORE, private va
         proposed = null; matches = 0
         locked = key; blankSince = -1L
         return candidate
+    }
+    fun lockCurrent(sku: String, size: String) {
+        proposed = null; matches = 0
+        locked = "${sku}|${size}"; blankSince = -1L
     }
     fun reset() { proposed = null; matches = 0; locked = null; blankSince = -1L }
 }

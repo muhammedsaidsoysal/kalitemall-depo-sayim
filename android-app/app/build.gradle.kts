@@ -9,8 +9,15 @@ android {
         applicationId = "com.kalitemall.deposayim"
         minSdk = 23
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0-native-beta"
+        versionCode = 2
+        versionName = "1.2-dual-roi"
+    }
+    // GitHub Actions debug APK is signed by an ephemeral key.
+    // Install this beta alongside the existing app so its unsynced scans remain safe.
+    buildTypes {
+        getByName("debug") {
+            applicationIdSuffix = ".dualroi"
+        }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

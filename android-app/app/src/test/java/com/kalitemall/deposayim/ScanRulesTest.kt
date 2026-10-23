@@ -17,10 +17,22 @@ class ScanRulesTest {
     }
     @Test fun rawSupplierBarcodeIsNotAProductSku() { assertNull(ScanRules.parse(listOf(OcrLine("SM-98035",.99f,.5f,.5f,0)))) }
     @Test fun mixedLabelsRejected() { assertNull(ScanRules.parse(lines()+OcrLine("197-1251-R01",.99f,.5f,.7f,1))) }
-    @Test fun lowConfidenceNeverCounted() {
+    @Test fun lowConfidenceMayCountAfterTwoMatchingReads() {
         val c=AutoCounter()
-        assertNull(c.observe(ScanRules.parse(lines(score=.70f)),0))
-        assertNull(c.observe(ScanRules.parse(lines(score=.70f)),100))
+        val candidate=ScanRules.parse(lines(score=.70f))
+        assertNull(c.observe(candidate,0))
+        assertNotNull(c.observe(candidate,100))
+        assertNull(c.observe(candidate,200))
+    }
+    @Test fun manualLockPreventsImmediateDoubleCount() {
+        val c=AutoCounter()
+        val candidate=ScanRules.parse(lines())!!
+        c.lockCurrent(candidate.sku,candidate.size)
+        assertNull(c.observe(candidate,10))
+        assertNull(c.observe(null,20,true))
+        assertNull(c.observe(null,800,true))
+        assertNull(c.observe(candidate,810))
+        assertNotNull(c.observe(candidate,820))
     }
     @Test fun requiresTwoFramesAndLocksSameLabel() {
         val c=AutoCounter()
@@ -33,4 +45,35 @@ class ScanRulesTest {
         assertNull(c.observe(good,1200))
         assertNotNull(c.observe(good,1300))
     }
+
+    @Test fun dualRegionsAcceptProductAndSizeWithoutColor() {
+        val code=listOf(OcrLine("317-2053-R56",.72f,.5f,.5f,0))
+        val size=listOf(OcrLine("40",.68f,.5f,.5f,1))
+        val result=ScanRules.parseDual(code,size)!!
+        assertEquals("317-2053-R56",result.sku)
+        assertEquals("40",result.size)
+        assertEquals(.68f,result.score,0.001f)
+    }
+    @Test fun productNameAndColorCannotSupplySizeFromCodeZone() {
+        val code=listOf(OcrLine("317-2053-R56 40 Bej",.99f,.5f,.5f,0))
+        assertNull(ScanRules.parseDual(code, emptyList()))
+    }
+    @Test fun mismatchedOrMissingRegionIsRejected() {
+        assertNull(ScanRules.parseDual(
+            listOf(OcrLine("SM-98035",.99f,.5f,.5f,0)),
+            listOf(OcrLine("SM",.99f,.5f,.5f,1))))
+        assertNull(ScanRules.parseDual(
+            listOf(OcrLine("317-2053-R56",.99f,.5f,.5f,0), OcrLine("197-1251-R01",.99f,.5f,.5f,0)),
+            listOf(OcrLine("40",.99f,.5f,.5f,1))))
+    }
+    @Test fun dualRegionRequiresTwoIdenticalFramesBeforeAutoCount() {
+        val code=listOf(OcrLine("317-2053-R56",.73f,.5f,.5f,0))
+        val size=listOf(OcrLine("40",.73f,.5f,.5f,1))
+        val candidate=ScanRules.parseDual(code,size)!!
+        val counter=AutoCounter()
+        assertNull(counter.observe(candidate,0))
+        assertNotNull(counter.observe(candidate,80))
+        assertNull(counter.observe(candidate,150))
+    }
+
 }

@@ -16,20 +16,48 @@
         <androidx.camera.view.PreviewView android:id="@+id/cameraPreview"
             android:layout_width="match_parent" android:layout_height="match_parent"
             app:implementationMode="compatible" />
-        <View android:layout_width="match_parent" android:layout_height="155dp"
+        <LinearLayout android:id="@+id/dualZonesOverlay"
+            android:layout_width="match_parent" android:layout_height="112dp"
+            android:layout_gravity="center" android:layout_marginHorizontal="16dp"
+            android:orientation="horizontal" android:gravity="center_vertical">
+            <FrameLayout android:id="@+id/codeTarget"
+                android:layout_width="0dp" android:layout_weight="2.7"
+                android:layout_height="match_parent" android:background="@drawable/scan_frame">
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:layout_gravity="top" android:gravity="center" android:padding="3dp"
+                    android:text="STOK KODU" android:textStyle="bold" android:textColor="#FFFFFF"
+                    android:background="#B2186D52" />
+            </FrameLayout>
+            <Space android:layout_width="9dp" android:layout_height="match_parent" />
+            <FrameLayout android:id="@+id/sizeTarget"
+                android:layout_width="0dp" android:layout_weight="1.3"
+                android:layout_height="match_parent" android:background="@drawable/scan_frame">
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:layout_gravity="top" android:gravity="center" android:padding="3dp"
+                    android:text="BEDEN" android:textStyle="bold" android:textColor="#FFFFFF"
+                    android:background="#B2186D52" />
+            </FrameLayout>
+        </LinearLayout>
+        <View android:id="@+id/fullFrameGuide"
+            android:layout_width="match_parent" android:layout_height="155dp"
             android:layout_gravity="center" android:layout_marginHorizontal="24dp"
-            android:background="@drawable/scan_frame" />
+            android:background="@drawable/scan_frame" android:visibility="gone" />
         <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
             android:layout_gravity="top" android:layout_margin="14dp"
             android:gravity="center" android:padding="8dp"
             android:background="#BF10241E" android:textColor="#FFFFFF"
-            android:text="Etiketteki stok kodunu ve bedeni çerçeveye getir" />
+            android:text="Sol kutuya stok kodu, sağ kutuya beden getir" />
+        <TextView android:id="@+id/readStatusText" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:layout_gravity="bottom"
+            android:layout_marginBottom="47dp" android:background="#D91B503B"
+            android:textColor="#FFFFFF" android:textStyle="bold"
+            android:padding="9dp" android:gravity="center" android:text="Okunan kod bekleniyor" />
         <TextView android:id="@+id/cameraStatus" android:layout_width="match_parent"
             android:layout_height="wrap_content" android:layout_gravity="bottom"
             android:background="#D910241E" android:textColor="#FFFFFF"
             android:padding="10dp" android:gravity="center" android:text="Kamera bekleniyor" />
     </FrameLayout>
-    <ScrollView android:layout_width="match_parent" android:layout_height="255dp"
+    <ScrollView android:layout_width="match_parent" android:layout_height="355dp"
         android:fillViewport="false">
         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
             android:orientation="vertical" android:padding="12dp">
@@ -43,6 +71,33 @@
                 <Button android:id="@+id/cameraButton" android:layout_width="wrap_content"
                     android:layout_height="wrap_content" android:text="Kamera" />
             </LinearLayout>
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:text="Okunan stok kodu ve beden (düzenlenebilir)"
+                android:textStyle="bold" android:textColor="#10241E" />
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal">
+                <EditText android:id="@+id/detectedSkuInput" android:layout_width="0dp"
+                    android:layout_weight="1" android:layout_height="48dp"
+                    android:singleLine="true" android:inputType="textCapCharacters"
+                    android:hint="317-2053-R56" />
+                <EditText android:id="@+id/detectedSizeInput" android:layout_width="75dp"
+                    android:layout_height="48dp" android:singleLine="true"
+                    android:inputType="textCapCharacters" android:hint="40" />
+            </LinearLayout>
+            <Button android:id="@+id/manualAddButton" android:layout_width="match_parent"
+                android:layout_height="48dp" android:text="Kontrol ettim · Manuel +1 kaydet" />
+            <Switch android:id="@+id/autoSwitch" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:checked="true"
+                android:text="Otomatik sayım (aynı kod + beden iki kez)" />
+            <Switch android:id="@+id/fullFrameSwitch"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:text="Etiket düzeni farklı: tüm etiketi tara (yedek)"
+                android:checked="false" />
+            <TextView android:id="@+id/rawOcrText" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:textColor="#475569"
+                android:paddingVertical="4dp" android:maxLines="3"
+                android:ellipsize="end" android:textSize="12sp"
+                android:text="Kameranın gördüğü yazı: —" />
             <TextView android:id="@+id/lastScanText" android:layout_width="match_parent"
                 android:layout_height="wrap_content" android:paddingVertical="7dp"
                 android:textSize="18sp" android:textStyle="bold" android:textColor="#10241E"
@@ -75,7 +130,7 @@
             </LinearLayout>
             <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:textColor="#5B6C65" android:textSize="12sp"
-                android:text="%85 eşik + 2 eşleşme. Aynı kodu tekrar saymak için 0,6 sn boş/koyu zemini göster. Kayıt önce telefona, sonra otomatik Sheets'e yazılır." />
+                android:text="Sayısal güven eşiği yok: otomatik sayım için iki aynı kod/beden okunur. Hatalı okuma varsa otomatiği kapat, alanları düzelt ve Manuel +1 kullan. Aynı etiketi tekrar saymak için 0,6 sn boş zemin göster. Kayıt önce telefona, sonra Sheets'e yazılır." />
         </LinearLayout>
     </ScrollView>
 </LinearLayout>
