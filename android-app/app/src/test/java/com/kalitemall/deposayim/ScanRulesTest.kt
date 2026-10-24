@@ -171,6 +171,25 @@ class ScanRulesTest {
         assertNotNull(c.observe(a,2000L))
     }
 
+    @Test fun middleWithLettersAndHyphensAcceptsActualProducts() {
+        val examples = listOf("186-033Y-R15", "197-7920A-R01", "302-ES-030-R01", "111-50660-R43", "317-2053-R56")
+        for(sku in examples) {
+            val lines = listOf(OcrLine(sku, .9f, .5f, .5f, 0))
+            assertEquals(sku, ScanRules.codeFromRegion(lines))
+            assertEquals(sku, ScanRules.parseDual(lines, listOf(OcrLine("28", .9f, .5f, .5f, 1)))!!.sku)
+        }
+    }
+    @Test fun suffixMustStillBeExactlyTwoDigits() {
+        for(sku in listOf("186-033Y-R151", "186-033Y-R1", "186-033Y-R15A", "186-033Y-R15-XX")) {
+            assertNull(ScanRules.codeFromRegion(listOf(OcrLine(sku, .9f, .5f, .5f, 0))))
+        }
+    }
+    @Test fun provisionalCodeWithLettersNeverCountsAutomatically() {
+        val noisy = listOf(OcrLine("186-033Y-R151", .9f, .5f, .5f, 0))
+        assertNull(ScanRules.codeFromRegion(noisy))
+        assertEquals("186-033Y-R15", ScanRules.provisionalCodeFromRegion(noisy))
+        assertNull(ScanRules.parseDual(noisy, listOf(OcrLine("28", .9f, .5f, .5f, 1))))
+    }
     @Test fun jeansWaistSizesAreRecognizedByCameraOcr() {
         val code = listOf(OcrLine("357-6040-R01", .94f, .5f, .5f, 0))
         for (waist in 24..35) {

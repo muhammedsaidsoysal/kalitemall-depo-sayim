@@ -10,7 +10,14 @@ data class ScanCandidate(val sku: String, val size: String, val score: Float, va
 object ScanRules {
     const val MIN_SCORE = 0f // No OCR confidence cutoff; rely on consecutive matching reads.
     // Distinguish the KaliteMall SKU from PodyumPlus raw barcode (SM-98035).
-    private val skuRe = Regex("(?<![A-Z0-9])([0-9]{3})\\s*[-–—]\\s*([0-9]{1,10})\\s*[-–—]\\s*([RKB])\\s*([0-9]{2})(?![A-Z0-9])")
+    // Mirrors Apps Script SKU rules: 2–3 digits, one or more alphanumeric
+    // middle segments (possibly with dashes), then R/K/B and exactly 2 digits.
+    private val middlePart = "([A-Z0-9]+(?:\\s*[-–—]\\s*[A-Z0-9]+)*)"
+    private val skuRe = Regex("(?<![A-Z0-9])([0-9]{2,3})\\s*[-–—]\\s*" + middlePart + "\\s*[-–—]\\s*([RKB])\\s*([0-9]{2})(?![A-Z0-9–—-])")
+    private fun formattedSku(m: MatchResult): String {
+        val middle = m.groupValues[2].replace(Regex("\\s*[-–—]\\s*"), "-")
+        return "${m.groupValues[1]}-$middle-${m.groupValues[3]}${m.groupValues[4]}"
+    }
     private val sizeRe = Regex("(?<![A-Z0-9])(STANDART|XXXL|XXL|LXL|4XL|3XL|STD|SM|ML|XS|XL|S|M|L|(?:2[4-9]|[3-5][0-9]|60))(?![A-Z0-9])")
 
     fun normalize(raw: String) = raw.uppercase(Locale.ROOT).replace('İ','I').replace('ı','I')
@@ -18,7 +25,7 @@ object ScanRules {
     /** Each region is isolated by bitmap cropping; product name is unnecessary. */
     fun codeFromRegion(lines: List<OcrLine>): String? {
         fun collect(text: String): List<String> = skuRe.findAll(normalize(text)).map { m ->
-            "${m.groupValues[1]}-${m.groupValues[2]}-${m.groupValues[3]}${m.groupValues[4]}"
+            formattedSku(m)
         }.toList()
         val direct = lines.flatMap { collect(it.text) }.distinct()
         if(direct.size > 1) return null // Never guess between two product codes.
@@ -48,11 +55,11 @@ object ScanRules {
      */
     fun provisionalCodeFromRegion(lines: List<OcrLine>): String? {
         val withOneTrailingDigit = Regex(
-            "(?<![A-Z0-9])([0-9]{3})\\s*[-–—]\\s*([0-9]{1,10})\\s*[-–—]\\s*([RKB])\\s*([0-9]{2})[0-9](?![A-Z0-9])"
+            "(?<![A-Z0-9])([0-9]{2,3})\\s*[-–—]\\s*" + middlePart + "\\s*[-–—]\\s*([RKB])\\s*([0-9]{2})[0-9](?![A-Z0-9–—-])"
         )
         val possibilities = lines.flatMap { line ->
             withOneTrailingDigit.findAll(normalize(line.text)).map { m ->
-                "${m.groupValues[1]}-${m.groupValues[2]}-${m.groupValues[3]}${m.groupValues[4]}"
+                formattedSku(m)
             }.toList()
         }.distinct()
         return possibilities.singleOrNull()
@@ -81,7 +88,7 @@ object ScanRules {
         val inFrame = lines.filter { it.centerX in 0.08f..0.92f && it.centerY in 0.12f..0.88f }
         val codes = inFrame.flatMap { line ->
             skuRe.findAll(normalize(line.text)).map { match ->
-                Triple("${match.groupValues[1]}-${match.groupValues[2]}-${match.groupValues[3]}${match.groupValues[4]}", line, match.value)
+                Triple(formattedSku(match), line, match.value)
             }.toList()
         }
         // More than one identifiable SKU in frame: do not guess.

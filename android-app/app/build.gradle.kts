@@ -9,14 +9,14 @@ android {
         applicationId = "com.kalitemall.deposayim"
         minSdk = 23
         targetSdk = 35
-        versionCode = 8
-        versionName = "1.8-jeans-size"
+        versionCode = 9
+        versionName = "1.9-alphanumeric-sku"
     }
     // GitHub Actions debug APK is signed by an ephemeral key.
     // Install this beta alongside the existing app so its unsynced scans remain safe.
     buildTypes {
         getByName("debug") {
-            applicationIdSuffix = ".serialv18"
+            applicationIdSuffix = ".serialv19"
         }
     }
     compileOptions {

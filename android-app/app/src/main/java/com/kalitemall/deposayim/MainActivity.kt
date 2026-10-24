@@ -472,7 +472,7 @@ class MainActivity : AppCompatActivity() {
             .replace('–','-').replace('—','-').replace(Regex("\\s+"),"")
         val size=ScanRules.normalize(ui.detectedSizeInput.text.toString()).trim()
             .replace("STANDART","STD")
-        val skuPattern=Regex("[0-9]{3}-[0-9]{1,10}-[RKB][0-9]{2}")
+        val skuPattern=Regex("[0-9]{2,3}(?:-[A-Z0-9]+)+-[RKB][0-9]{2}")
         val sizePattern=Regex("STD|SM|ML|LXL|XS|S|M|L|XL|XXL|XXXL|3XL|4XL|[0-9]{2}")
         if(!skuPattern.matches(sku) || !sizePattern.matches(size)) {
             toast("Ürün kodunu ve bedeni kontrol et: örn. 317-2053-R56 / 40")
