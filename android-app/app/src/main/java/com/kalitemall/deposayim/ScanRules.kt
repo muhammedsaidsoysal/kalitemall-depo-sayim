@@ -11,7 +11,7 @@ object ScanRules {
     const val MIN_SCORE = 0f // No OCR confidence cutoff; rely on consecutive matching reads.
     // Distinguish the KaliteMall SKU from PodyumPlus raw barcode (SM-98035).
     private val skuRe = Regex("(?<![A-Z0-9])([0-9]{3})\\s*[-–—]\\s*([0-9]{1,10})\\s*[-–—]\\s*([RKB])\\s*([0-9]{2})(?![A-Z0-9])")
-    private val sizeRe = Regex("(?<![A-Z0-9])(STANDART|XXXL|XXL|LXL|STD|SM|4XL|3XL|XS|XL|XXL|S|M|L|(?:3[4-9]|4[0-9]|5[0-9]|60))(?![A-Z0-9])")
+    private val sizeRe = Regex("(?<![A-Z0-9])(STANDART|XXXL|XXL|LXL|4XL|3XL|STD|SM|ML|XS|XL|S|M|L|(?:2[4-9]|[3-5][0-9]|60))(?![A-Z0-9])")
 
     fun normalize(raw: String) = raw.uppercase(Locale.ROOT).replace('İ','I').replace('ı','I')
 

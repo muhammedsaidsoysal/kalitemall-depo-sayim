@@ -171,4 +171,25 @@ class ScanRulesTest {
         assertNotNull(c.observe(a,2000L))
     }
 
+    @Test fun jeansWaistSizesAreRecognizedByCameraOcr() {
+        val code = listOf(OcrLine("357-6040-R01", .94f, .5f, .5f, 0))
+        for (waist in 24..35) {
+            val size = listOf(OcrLine(waist.toString(), .92f, .5f, .5f, 1))
+            assertEquals(waist.toString(), ScanRules.sizeFromRegion(size))
+            assertEquals(waist.toString(), ScanRules.parseDual(code, size)?.size)
+        }
+    }
+    @Test fun numericAndLetterSizesRemainSupported() {
+        val allowed = listOf("36", "38", "40", "42", "44", "46", "48", "50", "52", "54", "56", "60", "STD", "SM", "ML", "LXL", "XS", "S", "M", "L", "XL", "XXL", "XXXL", "3XL", "4XL")
+        for (size in allowed) {
+            assertEquals(size, ScanRules.sizeFromRegion(listOf(OcrLine(size, .95f, .5f, .5f, 0))))
+        }
+        assertEquals("STD", ScanRules.sizeFromRegion(listOf(OcrLine("Standart", .95f, .5f, .5f, 0))))
+    }
+    @Test fun sizeNumberCannotBePartOfLongerNumberOrWord() {
+        for (raw in listOf("128", "0280", "28A", "28/30", "24B")) {
+            assertNull("Should reject $raw", ScanRules.sizeFromRegion(listOf(OcrLine(raw, .95f, .5f, .5f, 0))))
+        }
+    }
+
 }
